@@ -1,0 +1,239 @@
+---
+title: "00_Direct_Comparison"
+author: 'Mohith Reddy Arikatla (CWID: moa4020)'
+date: "2024-02-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+setwd("/Users/mar/Library/CloudStorage/GoogleDrive-mohitharikatla.education@gmail.com/My Drive/RR9_MurineSequencingData/Thesis/02_rr9/00_Direct comparison")
+
+library(AnnotationDbi)
+library(DEGreport)
+library(DESeq2)
+library(EnhancedVolcano)
+library(EnsDb.Mmusculus.v79)
+library(RColorBrewer)
+library(TxDb.Mmusculus.UCSC.mm10.ensGene)
+library(TxDb.Mmusculus.UCSC.mm39.refGene)
+library(WebGestaltR)
+library(apeglm)
+library(clusterProfiler)
+library(data.table)
+library(dplyr)
+library(edgeR)
+library(enrichplot)
+library(fgsea)
+library(ggVennDiagram)
+library(ggplot2)
+library(ggupset)
+library(ggrepel)
+library(goseq)
+library(htmltools)
+library(magrittr)
+library(org.Mm.eg.db)
+library(pheatmap)
+library(patchwork)
+library(tidyverse)
+library(topGO)
+FILE_PD <- "PostDESeq.RData"
+load(FILE_PD)
+PGD <- "PostGSEA.RData"
+load(PGD)
+```
+
+```{r eval=FALSE}
+ONT_DGE.results <- ONT_DGE.results[order(-ONT_DGE.results$stat),]
+
+ONT_gene_list <- ONT_DGE.results$stat
+names(ONT_gene_list) <- row.names(ONT_DGE.results)
+head(ONT_gene_list)
+
+Illumina_DGE.results <- Illumina_DGE.results[order(-Illumina_DGE.results$stat),]
+
+Illumina_gene_list <- Illumina_DGE.results$stat
+names(Illumina_gene_list) <- row.names(Illumina_DGE.results)
+head(Illumina_gene_list)
+```
+
+```{r eval=FALSE}
+ONT_gse <- gseGO(ONT_gene_list,
+                 ont="All",
+                 keyType = "ENSEMBL",
+                 OrgDb = org.Mm.eg.db,
+                 pvalueCutoff = 0.05,
+                 eps=1e-300)
+```
+
+
+```{r eval=FALSE}
+Illumina_gse <- gseGO(Illumina_gene_list,
+                 ont="All",
+                 keyType = "ENSEMBL",
+                 OrgDb = org.Mm.eg.db,
+                 pvalueCutoff = 0.05,
+                 eps=1e-300)
+```
+
+```{r}
+#save.image(file="PostGSEA.RData")
+#PGD <- "PostGSEA.RData"
+#load(PGD)
+```
+
+
+```{r eval=FALSE}
+as.data.frame(ONT_gse)
+as.data.frame(Illumina_gse)
+```
+
+```{r eval=FALSE}
+dotplot(ONT_gse, font.size=8)
+dotplot(Illumina_gse, font.size=8)
+```
+
+```{r eval=FALSE}
+ONT_top20 <- ONT_gse@result[["Description"]][1:20]
+Illumina_top20 <- Illumina_gse@result[["Description"]][1:20]
+```
+
+```{r eval=FALSE}
+# List of items
+x <- list(ONT = ONT_top20, Illumina = Illumina_top20)
+
+# 2D Venn diagram
+ggVennDiagram(x)
+```
+
+
+```{r eval=FALSE}
+
+intersection <- intersect(row.names(Illumina_DGE.results),row.names(ONT_DGE.results))
+
+ONT_inter_DGE.results <- ONT_DGE.results[intersection,]
+
+ONT_inter_DGE.results <- ONT_inter_DGE.results[order(-ONT_inter_DGE.results$stat),]
+
+ONT_inter_gene_list <- ONT_inter_DGE.results$stat
+names(ONT_inter_gene_list) <- row.names(ONT_inter_DGE.results)
+head(ONT_inter_gene_list)
+
+ONT_inter_gse <- gseGO(ONT_inter_gene_list,
+                 ont="All",
+                 keyType = "ENSEMBL",
+                 OrgDb = org.Mm.eg.db,
+                 pvalueCutoff = 0.05,
+                 eps=1e-300)
+
+ONT_inter_gse@result$Description
+
+Illumina_inter_DGE.results <- Illumina_DGE.results[intersection,]
+
+Illumina_inter_DGE.results <- Illumina_inter_DGE.results[order(-Illumina_inter_DGE.results$stat),]
+
+Illumina_inter_gene_list <- Illumina_inter_DGE.results$stat
+names(Illumina_inter_gene_list) <- row.names(Illumina_inter_DGE.results)
+head(Illumina_inter_gene_list)
+
+Illumina_inter_gse <- gseGO(Illumina_inter_gene_list,
+                 ont="All",
+                 keyType = "ENSEMBL",
+                 OrgDb = org.Mm.eg.db,
+                 pvalueCutoff = 0.05,
+                 eps=1e-300)
+
+Illumina_inter_gse@result$Description[1:20]
+```
+
+
+```{r eval=FALSE}
+ONT_intersect_top20 <- ONT_inter_gse@result$Description[1:20]
+Illumina_intersect_top20 <- Illumina_inter_gse@result[["Description"]][1:20]
+```
+
+```{r eval=FALSE}
+# List of items
+intersect <- list(ONT = ONT_intersect_top20, Illumina = Illumina_intersect_top20)
+
+# 2D Venn diagram
+ggVennDiagram(intersect)
+```
+
+```{r}
+#Input for ORA
+ONT_DGE.results <- ONT_DGE.results[order(ONT_DGE.results$padj),]
+
+ONT_sigGenes <- row.names(ONT_DGE.results[which(ONT_DGE.results$padj<0.05),])
+
+write(unlist(ONT_sigGenes),file =  "ONT_sigGenes.txt")
+
+Illumina_DGE.results <- Illumina_DGE.results[order(Illumina_DGE.results$padj),]
+
+Illumina_sigGenes <- row.names(Illumina_DGE.results[which(Illumina_DGE.results$padj<0.05),])
+
+write(unlist(Illumina_sigGenes),file =  "Illumina_sigGenes.txt")
+
+# ONT_sigGenes_idMap <- idMapping(organism = "mmusculus",inputGene = ONT_sigGenes,sourceIdType = "ensembl_gene_id",targetIdType="entrezgene")
+# 
+# ONT_sigGenes_Entrez <- ONT_sigGenes_idMap$mapped$entrezgene
+# 
+# goSlimSummary(organism="mmusculus",geneList = ONT_sigGenes_Entrez,outputFile = "ONT_Hyp00_goSlimSummary_webgestalt",outputType = "pdf")
+```
+
+```{r}
+#Input for GSEA
+ONT_DGE.results <- ONT_DGE.results[order(-ONT_DGE.results$stat),]
+
+ONT_Stat_order <- data.frame(gene_id=row.names(ONT_DGE.results))
+
+ONT_Stat_order$stat <- ONT_DGE.results$stat
+ONT_Stat_order$padj <- ONT_DGE.results$padj
+ONT_Stat_order$pvalue <- ONT_DGE.results$pvalue
+
+ONT_allGenes_idMap <- idMapping(organism = "mmusculus",inputGene = ONT_Stat_order$gene_id,sourceIdType = "ensembl_gene_id",targetIdType="entrezgene")
+
+# Perform an inner join to keep only the rows with matching gene IDs
+ONT_allGenes_idMap <- inner_join(ONT_Stat_order, ONT_allGenes_idMap$mapped, by = c("gene_id" = "userId"))
+
+ONT_allGenes_idMap_filtered <- ONT_allGenes_idMap[ONT_allGenes_idMap$padj<0.05,]
+
+ONT_allGenes_idMap_filtered <- ONT_allGenes_idMap_filtered[order(-ONT_allGenes_idMap_filtered$stat),]
+
+ONT_allGeneIDs <- cbind(ONT_allGenes_idMap_filtered$entrezgene,ONT_allGenes_idMap_filtered$stat)
+
+write.table(ONT_allGeneIDs, file = 'ONT_allGeneIDs.rnk', sep = '\t', row.names = FALSE,col.names = FALSE,quote = FALSE)
+
+
+Illumina_DGE.results <- Illumina_DGE.results[order(-Illumina_DGE.results$stat),]
+
+Illumina_Stat_order <- data.frame(gene_id=row.names(Illumina_DGE.results))
+
+Illumina_Stat_order$stat <- Illumina_DGE.results$stat
+Illumina_Stat_order$padj <- Illumina_DGE.results$padj
+Illumina_Stat_order$pvalue <- Illumina_DGE.results$pvalue
+
+Illumina_allGenes_idMap <- idMapping(organism = "mmusculus",inputGene = Illumina_Stat_order$gene_id,sourceIdType = "ensembl_gene_id",targetIdType="entrezgene")
+
+# Perform an inner join to keep only the rows with matching gene IDs
+Illumina_allGenes_idMap <- inner_join(Illumina_Stat_order, Illumina_allGenes_idMap$mapped, by = c("gene_id" = "userId"))
+
+Illumina_allGenes_idMap_filtered <- Illumina_allGenes_idMap[Illumina_allGenes_idMap$padj<0.05,]
+
+Illumina_allGenes_idMap_filtered <- Illumina_allGenes_idMap_filtered[order(-Illumina_allGenes_idMap_filtered$stat),]
+
+Illumina_allGeneIDs <- cbind(Illumina_allGenes_idMap_filtered$entrezgene,Illumina_allGenes_idMap_filtered$stat)
+
+write.table(Illumina_allGeneIDs, file = 'Illumina_allGeneIDs.rnk', sep = '\t', row.names = FALSE,col.names = FALSE,quote = FALSE)
+```
+
+```{r}
+
+```
+
+
+```{r}
+#save.image("PostGSEA.RData")
+```
+

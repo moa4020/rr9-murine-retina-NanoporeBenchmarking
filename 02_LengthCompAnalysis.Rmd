@@ -1,0 +1,769 @@
+---
+title: "LengthCompAnalysis"
+author: 'Mohith Reddy Arikatla (CWID: moa4020)'
+date: "2024-02-09"
+output: html_document
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+library(fitdistrplus)
+library(logspline)
+library(dplyr)
+library(DESeq2)
+library(magrittr)
+library(pheatmap)
+library(ggplot2)
+library(tidyverse)
+library(mnormt)
+library(nlcor)
+library(RColorBrewer)
+```
+
+```{r}
+gencode.vM33.All.GeneLengths <- read.table(file="gencode.vM33.All.GeneLengths.txt",sep="\t",col.names = c("GeneID","GeneLength"))
+
+# Convert to Numeric
+gencode.vM33.All.GeneLengths <- gencode.vM33.All.GeneLengths %>%
+  mutate(across(-1, as.numeric))
+
+row.names(gencode.vM33.All.GeneLengths) <- sub("\\..*", "", gencode.vM33.All.GeneLengths$GeneID)
+```
+
+```{r}
+hist(gencode.vM33.All.GeneLengths$GeneLength)
+
+gencode.vM33.All.GeneLengths$log2.GeneLength <- log2(gencode.vM33.All.GeneLengths$GeneLength) + 1
+
+par(mar = c(5, 5, 2, 2))
+hist(gencode.vM33.All.GeneLengths$log2.GeneLength, freq = FALSE)
+lines(density(gencode.vM33.All.GeneLengths$log2.GeneLength))
+```
+
+```{r }
+par(mar = c(5, 5, 2, 2))
+descdist(gencode.vM33.All.GeneLengths$log2.GeneLength, discrete = FALSE)
+```
+
+```{r }
+fit.norm <- fitdist(gencode.vM33.All.GeneLengths$log2.GeneLength, "norm")
+par(mar = c(5, 5, 2, 2))
+plot(fit.norm)
+```
+
+```{r }}
+fit.weibull <- fitdist(gencode.vM33.All.GeneLengths$log2.GeneLength, "weibull")
+par(mar = c(5, 5, 2, 2))
+plot(fit.weibull)
+```
+
+```{r }
+fit.lognorm <- fitdist(gencode.vM33.All.GeneLengths$log2.GeneLength, "lnorm")
+par(mar = c(5, 5, 2, 2))
+plot(fit.lognorm)
+```
+
+```{r }
+fit.norm$aic
+fit.weibull$aic
+fit.lognorm$aic
+```
+
+Choose top and bottom 5% genes and median genes in our DESeq datasets for sampling. 
+
+```{r message=FALSE}
+PDDo <- "/Users/mar/Library/CloudStorage/GoogleDrive-mohitharikatla.education@gmail.com/My Drive/RR9_MurineSequencingData/Thesis/02_rr9/00.1_Overlap_DESeq/PostDESeq_overlap.RData"
+load(PDDo)
+```
+
+### Gene Length Comparison (Overlap)
+
+```{r}
+gencode.vM33.All.GeneLengths.filtered <- gencode.vM33.All.GeneLengths[Overlap_names,]
+```
+
+```{r}
+median_value <- median(gencode.vM33.All.GeneLengths.filtered$log2.GeneLength)
+
+# Calculate the absolute differences between each data point and the median
+gencode.vM33.All.GeneLengths.filtered$ab_diff <- abs(gencode.vM33.All.GeneLengths.filtered$log2.GeneLength - median_value)
+
+median_500_genes <- gencode.vM33.All.GeneLengths.filtered[order(gencode.vM33.All.GeneLengths.filtered$ab_diff)[1:500],]
+
+top_500_genes <- gencode.vM33.All.GeneLengths.filtered[order(-gencode.vM33.All.GeneLengths.filtered$GeneLength)[1:500],]
+
+bottom_500_genes <- gencode.vM33.All.GeneLengths.filtered[order(gencode.vM33.All.GeneLengths.filtered$GeneLength)[1:500],]
+```
+
+```{r}
+sample_genes <- list(
+  median500 = median_500_genes,
+  top500 = top_500_genes,
+  bottom500 = bottom_500_genes
+)
+
+ONT_median.ds <- ONT_DESeq_overlap.ds[row.names(median_500_genes), ]
+Illumina_median.ds <- Illumina_DESeq_overlap.ds[row.names(median_500_genes), ]
+
+ONT_top.ds <- ONT_DESeq_overlap.ds[row.names(top_500_genes), ]
+Illumina_top.ds <- Illumina_DESeq_overlap.ds[row.names(top_500_genes), ]
+
+ONT_bottom.ds <- ONT_DESeq_overlap.ds[row.names(bottom_500_genes), ]
+Illumina_bottom.ds <- Illumina_DESeq_overlap.ds[row.names(bottom_500_genes), ]
+```
+
+```{r}
+ONT_median.rlog <- rlog(ONT_median.ds,blind=TRUE)
+Illumina_median.rlog <- rlog(Illumina_median.ds,blind=TRUE)
+
+plotPCA(ONT_median.rlog, intgroup="condition", ntop = 100, returnData=FALSE)
+plotPCA(Illumina_median.rlog, intgroup="condition", ntop = 100, returnData=FALSE)
+```
+
+```{r}
+ONT_top.rlog <- rlog(ONT_top.ds,blind=TRUE)
+Illumina_top.rlog <- rlog(Illumina_top.ds,blind=TRUE)
+
+plotPCA(ONT_top.rlog, intgroup="condition", ntop = 100, returnData=FALSE)
+plotPCA(Illumina_top.rlog, intgroup="condition", ntop = 100, returnData=FALSE)
+```
+
+```{r}
+ONT_bottom.rlog <- rlog(ONT_bottom.ds,blind=TRUE)
+Illumina_bottom.rlog <- rlog(Illumina_bottom.ds,blind=TRUE)
+
+plotPCA(ONT_bottom.rlog, intgroup="condition", ntop = 100, returnData=FALSE)
+plotPCA(Illumina_bottom.rlog, intgroup="condition", ntop = 100, returnData=FALSE)
+```
+```{r}
+design(ONT_bottom.ds) <- ~ condition
+ONT_bottom.ds$condition %<>% relevel(ref="GC")
+ONT_bottom.ds %<>% DESeq()
+# normalize for diffs in sequencing depth and abundance per sample
+ONT_bottom.ds %<>% estimateSizeFactors()
+# gene-wise dispersion estimates across all samples
+ONT_bottom.ds %<>% estimateDispersions()
+# fit a neg. binomial GLM and compute Wald stat for each gene 
+ONT_bottom.ds %<>% nbinomWaldTest()
+
+ONT_bottom.results <- results(ONT_bottom.ds,independentFiltering = TRUE,alpha = 0.05)
+
+design(Illumina_bottom.ds) <- ~ condition
+Illumina_bottom.ds$condition %<>% relevel(ref="GC")
+Illumina_bottom.ds %<>% DESeq()
+# normalize for diffs in sequencing depth and abundance per sample
+Illumina_bottom.ds %<>% estimateSizeFactors()
+# gene-wise dispersion estimates across all samples
+Illumina_bottom.ds %<>% estimateDispersions()
+# fit a neg. binomial GLM and compute Wald stat for each gene 
+Illumina_bottom.ds %<>% nbinomWaldTest()
+
+Illumina_bottom.results <- results(Illumina_bottom.ds,independentFiltering = TRUE,alpha = 0.05)
+```
+
+```{r}
+design(ONT_top.ds) <- ~ condition
+ONT_top.ds$condition %<>% relevel(ref="GC")
+ONT_top.ds %<>% DESeq()
+# normalize for diffs in sequencing depth and abundance per sample
+ONT_top.ds %<>% estimateSizeFactors()
+# gene-wise dispersion estimates across all samples
+ONT_top.ds %<>% estimateDispersions()
+# fit a neg. binomial GLM and compute Wald stat for each gene 
+ONT_top.ds %<>% nbinomWaldTest()
+
+ONT_top.results <- results(ONT_top.ds,independentFiltering = TRUE,alpha = 0.05)
+
+design(Illumina_top.ds) <- ~ condition
+Illumina_top.ds$condition %<>% relevel(ref="GC")
+Illumina_top.ds %<>% DESeq()
+# normalize for diffs in sequencing depth and abundance per sample
+Illumina_top.ds %<>% estimateSizeFactors()
+# gene-wise dispersion estimates across all samples
+Illumina_top.ds %<>% estimateDispersions()
+# fit a neg. binomial GLM and compute Wald stat for each gene 
+Illumina_top.ds %<>% nbinomWaldTest()
+
+Illumina_top.results <- results(Illumina_top.ds,independentFiltering = TRUE,alpha = 0.05)
+```
+```{r}
+design(ONT_median.ds) <- ~ condition
+ONT_median.ds$condition %<>% relevel(ref="GC")
+ONT_median.ds %<>% DESeq()
+# normalize for diffs in sequencing depth and abundance per sample
+ONT_median.ds %<>% estimateSizeFactors()
+# gene-wise dispersion estimates across all samples
+ONT_median.ds %<>% estimateDispersions()
+# fit a neg. binomial GLM and compute Wald stat for each gene 
+ONT_median.ds %<>% nbinomWaldTest()
+
+ONT_median.results <- results(ONT_median.ds,independentFiltering = TRUE,alpha = 0.05)
+
+design(Illumina_median.ds) <- ~ condition
+Illumina_median.ds$condition %<>% relevel(ref="GC")
+Illumina_median.ds %<>% DESeq()
+# normalize for diffs in sequencing depth and abundance per sample
+Illumina_median.ds %<>% estimateSizeFactors()
+# gene-wise dispersion estimates across all samples
+Illumina_median.ds %<>% estimateDispersions()
+# fit a neg. binomial GLM and compute Wald stat for each gene 
+Illumina_median.ds %<>% nbinomWaldTest()
+
+Illumina_median.results <- results(Illumina_median.ds,independentFiltering = TRUE,alpha = 0.05)
+```
+
+```{r}
+ONT_median.results <- ONT_median.results %>% `[`(order(.$padj),)
+head(ONT_median.results)
+
+par(mfrow=c(1,2))
+plotCounts(ONT_median.ds, gene="ENSMUSG00000029343", normalized = TRUE, xlab="")
+plotCounts(ONT_median.ds, gene = which.max(ONT_median.results$padj), xlab="",
+           main = "Gene with max. p.adj.\n(=least significant)")
+```
+
+
+```{r}
+Illumina_median.results <- Illumina_median.results %>% `[`(order(.$padj),)
+head(Illumina_median.results)
+
+par(mfrow=c(1,2))
+plotCounts(Illumina_median.ds, gene="ENSMUSG00000018752", normalized = TRUE, xlab="")
+plotCounts(Illumina_median.ds, gene = which.max(Illumina_median.results$padj), xlab="",
+           main = "Gene with max. p.adj.\n(=least significant)")
+```
+
+```{r}
+# identify genes with the desired adjusted p-value cut-off
+Illumina_median.DGEgenes <- rownames(subset(Illumina_median.results, padj < 0.05)) 
+# extract rlog-transformed values into a matrix
+Illumina_median_rlog.dge <- Illumina_median.rlog[Illumina_median.DGEgenes,] %>% assay
+# heatmap of DEG sorted by p.adjust
+pheatmap(Illumina_median_rlog.dge, scale="row",
+         show_rownames=FALSE, main="Illumina DGE",
+         color=colorRampPalette(RColorBrewer::brewer.pal(n=7, name="Reds"))(100))
+
+# identify genes with the desired adjusted p-value cut-off
+Illumina_top.DGEgenes <- rownames(subset(Illumina_top.results, padj < 0.05)) 
+# extract rlog-transformed values into a matrix
+Illumina_top_rlog.dge <- Illumina_top.rlog[Illumina_top.DGEgenes,] %>% assay
+# heatmap of DEG sorted by p.adjust
+pheatmap(Illumina_top_rlog.dge, scale="row",
+         show_rownames=FALSE, main="Illumina DGE",
+         color=colorRampPalette(RColorBrewer::brewer.pal(n=7, name="Reds"))(100))
+
+# identify genes with the desired adjusted p-value cut-off
+Illumina_bottom.DGEgenes <- rownames(subset(Illumina_bottom.results, padj < 0.05)) 
+# extract rlog-transformed values into a matrix
+Illumina_bottom_rlog.dge <- Illumina_bottom.rlog[Illumina_bottom.DGEgenes,] %>% assay
+# heatmap of DEG sorted by p.adjust
+# pheatmap(Illumina_bottom_rlog.dge, scale="row",
+#          show_rownames=FALSE, main="Illumina DGE",
+#          color=colorRampPalette(RColorBrewer::brewer.pal(n=7, name="Reds"))(100))
+```
+changing the color scheme on pheatmap to see more contrast
+```{r}
+
+
+# identify genes with the desired adjusted p-value cut-off
+ONT_median.DGEgenes <- rownames(subset(ONT_median.results, pvalue<0.05)) 
+# extract rlog-transformed values into a matrix
+ONT_median_rlog.dge <- ONT_median.rlog[ONT_median.DGEgenes,] %>% assay
+# heatmap of DEG sorted by p.adjust
+pheatmap(ONT_median_rlog.dge, scale="row",
+         show_rownames=FALSE, main="ONT DGE",
+         color = colorRampPalette(c("blue", "red"))(100))
+
+# identify genes with the desired adjusted p-value cut-off
+ONT_top.DGEgenes <- rownames(subset(ONT_top.results, pvalue<0.05)) 
+# extract rlog-transformed values into a matrix
+ONT_top_rlog.dge <- ONT_top.rlog[ONT_top.DGEgenes,] %>% assay
+# heatmap of DEG sorted by p.adjust
+pheatmap(ONT_top_rlog.dge, scale="row",
+         show_rownames=FALSE, main="ONT DGE",
+         color = colorRampPalette(c("blue", "red"))(100))
+
+# identify genes with the desired adjusted p-value cut-off
+ONT_bottom.DGEgenes <- rownames(subset(ONT_bottom.results, pvalue<0.05)) 
+# extract rlog-transformed values into a matrix
+ONT_bottom_rlog.dge <- ONT_bottom.rlog[ONT_bottom.DGEgenes,] %>% assay
+# heatmap of DEG sorted by p.adjust
+pheatmap(ONT_bottom_rlog.dge, scale="row",
+         show_rownames=FALSE, main="ONT DGE",
+         color = colorRampPalette(c("blue", "red"))(100))
+```
+Since nanopore is not giving a great result with 500 genes. Let's try increasing the gene set size. 
+
+```{r}
+
+median_1000_genes <- gencode.vM33.All.GeneLengths.filtered[order(gencode.vM33.All.GeneLengths.filtered$ab_diff)[1:1000],]
+
+top_1000_genes <- gencode.vM33.All.GeneLengths.filtered[order(-gencode.vM33.All.GeneLengths.filtered$GeneLength)[1:1000],]
+
+bottom_1000_genes <- gencode.vM33.All.GeneLengths.filtered[order(gencode.vM33.All.GeneLengths.filtered$GeneLength)[1:1000],]
+
+sample_genes <- list(
+  median500 = median_500_genes,
+  top500 = top_500_genes,
+  bottom500 = bottom_500_genes,
+  median1000 = median_1000_genes,
+  top1000 = top_1000_genes,
+  bottom1000 = bottom_1000_genes
+)
+
+ONT_median1000.ds <- ONT_DESeq_overlap.ds[row.names(median_1000_genes), ]
+ONT_top1000.ds <- ONT_DESeq_overlap.ds[row.names(top_1000_genes), ]
+ONT_bottom1000.ds <- ONT_DESeq_overlap.ds[row.names(bottom_1000_genes), ]
+
+ONT_median1000.rlog <- rlog(ONT_median1000.ds,blind=TRUE)
+plotPCA(ONT_median1000.rlog, intgroup="condition", ntop = 100, returnData=FALSE)
+
+ONT_top1000.rlog <- rlog(ONT_top1000.ds,blind=TRUE)
+plotPCA(ONT_top1000.rlog, intgroup="condition", ntop = 100, returnData=FALSE)
+
+ONT_bottom1000.rlog <- rlog(ONT_bottom1000.ds,blind=TRUE)
+plotPCA(ONT_bottom1000.rlog, intgroup="condition", ntop = 100, returnData=FALSE)
+
+design(ONT_median1000.ds) <- ~ condition
+ONT_median1000.ds$condition %<>% relevel(ref="GC")
+ONT_median1000.ds %<>% DESeq()
+# normalize for diffs in sequencing depth and abundance per sample
+ONT_median1000.ds %<>% estimateSizeFactors()
+# gene-wise dispersion estimates across all samples
+ONT_median1000.ds %<>% estimateDispersions()
+# fit a neg. binomial GLM and compute Wald stat for each gene 
+ONT_median1000.ds %<>% nbinomWaldTest()
+
+ONT_median1000.results <- results(ONT_median1000.ds,independentFiltering = TRUE,alpha = 0.05)
+
+design(ONT_top1000.ds) <- ~ condition
+ONT_top1000.ds$condition %<>% relevel(ref="GC")
+ONT_top1000.ds %<>% DESeq()
+# normalize for diffs in sequencing depth and abundance per sample
+ONT_top1000.ds %<>% estimateSizeFactors()
+# gene-wise dispersion estimates across all samples
+ONT_top1000.ds %<>% estimateDispersions()
+# fit a neg. binomial GLM and compute Wald stat for each gene 
+ONT_top1000.ds %<>% nbinomWaldTest()
+
+ONT_top1000.results <- results(ONT_top1000.ds,independentFiltering = TRUE,alpha = 0.05)
+
+
+design(ONT_bottom1000.ds) <- ~ condition
+ONT_bottom1000.ds$condition %<>% relevel(ref="GC")
+ONT_bottom1000.ds %<>% DESeq()
+# normalize for diffs in sequencing depth and abundance per sample
+ONT_bottom1000.ds %<>% estimateSizeFactors()
+# gene-wise dispersion estimates across all samples
+ONT_bottom1000.ds %<>% estimateDispersions()
+# fit a neg. binomial GLM and compute Wald stat for each gene 
+ONT_bottom1000.ds %<>% nbinomWaldTest()
+
+ONT_bottom1000.results <- results(ONT_bottom1000.ds,independentFiltering = TRUE,alpha = 0.05)
+
+# identify genes with the desired adjusted p-value cut-off
+ONT_median1000.DGEgenes <- rownames(subset(ONT_median1000.results, pvalue<0.05)) 
+# extract rlog-transformed values into a matrix
+ONT_median1000_rlog.dge <- ONT_median1000.rlog[ONT_median1000.DGEgenes,] %>% assay
+# heatmap of DEG sorted by p.adjust
+pheatmap(ONT_median1000_rlog.dge, scale="row",
+         show_rownames=FALSE, main="ONT DGE",
+         color = colorRampPalette(c("blue", "red"))(100))
+
+# identify genes with the desired adjusted p-value cut-off
+ONT_top1000.DGEgenes <- rownames(subset(ONT_top1000.results, pvalue<0.05)) 
+# extract rlog-transformed values into a matrix
+ONT_top1000_rlog.dge <- ONT_top1000.rlog[ONT_top1000.DGEgenes,] %>% assay
+# heatmap of DEG sorted by p.adjust
+pheatmap(ONT_top1000_rlog.dge, scale="row",
+         show_rownames=FALSE, main="ONT DGE",
+         color = colorRampPalette(c("blue", "red"))(100))
+
+# identify genes with the desired adjusted p-value cut-off
+ONT_bottom1000.DGEgenes <- rownames(subset(ONT_bottom1000.results, pvalue<0.05)) 
+# extract rlog-transformed values into a matrix
+ONT_bottom1000_rlog.dge <- ONT_bottom1000.rlog[ONT_bottom1000.DGEgenes,] %>% assay
+# heatmap of DEG sorted by p.adjust
+pheatmap(ONT_bottom1000_rlog.dge, scale="row",
+         show_rownames=FALSE, main="ONT DGE",
+         color = colorRampPalette(c("blue", "red"))(100))
+```
+
+```{r}
+
+median_5000_genes <- gencode.vM33.All.GeneLengths.filtered[order(gencode.vM33.All.GeneLengths.filtered$ab_diff)[1:5000],]
+
+top_5000_genes <- gencode.vM33.All.GeneLengths.filtered[order(-gencode.vM33.All.GeneLengths.filtered$GeneLength)[1:5000],]
+
+bottom_5000_genes <- gencode.vM33.All.GeneLengths.filtered[order(gencode.vM33.All.GeneLengths.filtered$GeneLength)[1:5000],]
+
+sample_genes <- list(
+  median500 = median_500_genes,
+  top500 = top_500_genes,
+  bottom500 = bottom_500_genes,
+  median1000 = median_1000_genes,
+  top1000 = top_1000_genes,
+  bottom1000 = bottom_1000_genes,
+  median5000 = median_5000_genes,
+  top5000 = top_5000_genes,
+  bottom5000 = bottom_5000_genes
+)
+
+ONT_median5000.ds <- ONT_DESeq_overlap.ds[row.names(median_5000_genes), ]
+ONT_top5000.ds <- ONT_DESeq_overlap.ds[row.names(top_5000_genes), ]
+ONT_bottom5000.ds <- ONT_DESeq_overlap.ds[row.names(bottom_5000_genes), ]
+
+ONT_median5000.rlog <- rlog(ONT_median5000.ds,blind=TRUE)
+plotPCA(ONT_median5000.rlog, intgroup="condition", ntop = 100, returnData=FALSE)
+
+ONT_top5000.rlog <- rlog(ONT_top5000.ds,blind=TRUE)
+plotPCA(ONT_top5000.rlog, intgroup="condition", ntop = 100, returnData=FALSE)
+
+ONT_bottom5000.rlog <- rlog(ONT_bottom5000.ds,blind=TRUE)
+plotPCA(ONT_bottom5000.rlog, intgroup="condition", ntop = 100, returnData=FALSE)
+
+design(ONT_median5000.ds) <- ~ condition
+ONT_median5000.ds$condition %<>% relevel(ref="GC")
+ONT_median5000.ds %<>% DESeq()
+# normalize for diffs in sequencing depth and abundance per sample
+ONT_median5000.ds %<>% estimateSizeFactors()
+# gene-wise dispersion estimates across all samples
+ONT_median5000.ds %<>% estimateDispersions()
+# fit a neg. binomial GLM and compute Wald stat for each gene 
+ONT_median5000.ds %<>% nbinomWaldTest()
+
+ONT_median5000.results <- results(ONT_median5000.ds,independentFiltering = TRUE,alpha = 0.05)
+
+design(ONT_top5000.ds) <- ~ condition
+ONT_top5000.ds$condition %<>% relevel(ref="GC")
+ONT_top5000.ds %<>% DESeq()
+# normalize for diffs in sequencing depth and abundance per sample
+ONT_top5000.ds %<>% estimateSizeFactors()
+# gene-wise dispersion estimates across all samples
+ONT_top5000.ds %<>% estimateDispersions()
+# fit a neg. binomial GLM and compute Wald stat for each gene 
+ONT_top5000.ds %<>% nbinomWaldTest()
+
+ONT_top5000.results <- results(ONT_top5000.ds,independentFiltering = TRUE,alpha = 0.05)
+
+
+design(ONT_bottom5000.ds) <- ~ condition
+ONT_bottom5000.ds$condition %<>% relevel(ref="GC")
+ONT_bottom5000.ds %<>% DESeq()
+# normalize for diffs in sequencing depth and abundance per sample
+ONT_bottom5000.ds %<>% estimateSizeFactors()
+# gene-wise dispersion estimates across all samples
+ONT_bottom5000.ds %<>% estimateDispersions()
+# fit a neg. binomial GLM and compute Wald stat for each gene 
+ONT_bottom5000.ds %<>% nbinomWaldTest()
+
+ONT_bottom5000.results <- results(ONT_bottom5000.ds,independentFiltering = TRUE,alpha = 0.05)
+
+# identify genes with the desired adjusted p-value cut-off
+ONT_median5000.DGEgenes <- rownames(subset(ONT_median5000.results, padj<0.05)) 
+# extract rlog-transformed values into a matrix
+ONT_median5000_rlog.dge <- ONT_median5000.rlog[ONT_median5000.DGEgenes,] %>% assay
+# heatmap of DEG sorted by p.adjust
+pheatmap(ONT_median5000_rlog.dge, scale="row",
+         show_rownames=FALSE, main="ONT DGE",
+         color = colorRampPalette(c("blue", "red"))(100))
+
+# identify genes with the desired adjusted p-value cut-off
+ONT_top5000.DGEgenes <- rownames(subset(ONT_top5000.results, padj<0.05)) 
+# extract rlog-transformed values into a matrix
+ONT_top5000_rlog.dge <- ONT_top5000.rlog[ONT_top5000.DGEgenes,] %>% assay
+# heatmap of DEG sorted by p.adjust
+pheatmap(ONT_top5000_rlog.dge, scale="row",
+         show_rownames=FALSE, main="ONT DGE",
+         color = colorRampPalette(c("blue", "red"))(100))
+
+# identify genes with the desired adjusted p-value cut-off
+ONT_bottom5000.DGEgenes <- rownames(subset(ONT_bottom5000.results, padj<0.05)) 
+# extract rlog-transformed values into a matrix
+ONT_bottom5000_rlog.dge <- ONT_bottom5000.rlog[ONT_bottom5000.DGEgenes,] %>% assay
+# heatmap of DEG sorted by p.adjust
+pheatmap(ONT_bottom5000_rlog.dge, scale="row",
+         show_rownames=FALSE, main="ONT DGE",
+         color = colorRampPalette(c("blue", "red"))(100))
+
+```
+
+
+```{r}
+median_8000_genes <- gencode.vM33.All.GeneLengths.filtered[order(gencode.vM33.All.GeneLengths.filtered$ab_diff)[1:8000],]
+
+top_8000_genes <- gencode.vM33.All.GeneLengths.filtered[order(-gencode.vM33.All.GeneLengths.filtered$GeneLength)[1:8000],]
+
+bottom_8000_genes <- gencode.vM33.All.GeneLengths.filtered[order(gencode.vM33.All.GeneLengths.filtered$GeneLength)[1:8000],]
+
+sample_genes <- list(
+  median500 = median_500_genes,
+  top500 = top_500_genes,
+  bottom500 = bottom_500_genes,
+  median1000 = median_1000_genes,
+  top1000 = top_1000_genes,
+  bottom1000 = bottom_1000_genes,
+  median5000 = median_5000_genes,
+  top5000 = top_5000_genes,
+  bottom5000 = bottom_5000_genes,
+  median8000 = median_8000_genes,
+  top8000 = top_8000_genes,
+  bottom8000 = bottom_8000_genes
+)
+
+ONT_median8000.ds <- ONT_DESeq_overlap.ds[row.names(median_8000_genes), ]
+ONT_top8000.ds <- ONT_DESeq_overlap.ds[row.names(top_8000_genes), ]
+ONT_bottom8000.ds <- ONT_DESeq_overlap.ds[row.names(bottom_8000_genes), ]
+
+ONT_median8000.rlog <- rlog(ONT_median8000.ds,blind=TRUE)
+plotPCA(ONT_median8000.rlog, intgroup="condition", ntop = 100, returnData=FALSE)
+
+ONT_top8000.rlog <- rlog(ONT_top8000.ds,blind=TRUE)
+plotPCA(ONT_top8000.rlog, intgroup="condition", ntop = 100, returnData=FALSE)
+
+ONT_bottom8000.rlog <- rlog(ONT_bottom8000.ds,blind=TRUE)
+plotPCA(ONT_bottom8000.rlog, intgroup="condition", ntop = 100, returnData=FALSE)
+
+design(ONT_median8000.ds) <- ~ condition
+ONT_median8000.ds$condition %<>% relevel(ref="GC")
+ONT_median8000.ds %<>% DESeq()
+# normalize for diffs in sequencing depth and abundance per sample
+ONT_median8000.ds %<>% estimateSizeFactors()
+# gene-wise dispersion estimates across all samples
+ONT_median8000.ds %<>% estimateDispersions()
+# fit a neg. binomial GLM and compute Wald stat for each gene 
+ONT_median8000.ds %<>% nbinomWaldTest()
+
+ONT_median8000.results <- results(ONT_median8000.ds,independentFiltering = TRUE,alpha = 0.05)
+
+design(ONT_top8000.ds) <- ~ condition
+ONT_top8000.ds$condition %<>% relevel(ref="GC")
+ONT_top8000.ds %<>% DESeq()
+# normalize for diffs in sequencing depth and abundance per sample
+ONT_top8000.ds %<>% estimateSizeFactors()
+# gene-wise dispersion estimates across all samples
+ONT_top8000.ds %<>% estimateDispersions()
+# fit a neg. binomial GLM and compute Wald stat for each gene 
+ONT_top8000.ds %<>% nbinomWaldTest()
+
+ONT_top8000.results <- results(ONT_top8000.ds,independentFiltering = TRUE,alpha = 0.05)
+
+
+design(ONT_bottom8000.ds) <- ~ condition
+ONT_bottom8000.ds$condition %<>% relevel(ref="GC")
+ONT_bottom8000.ds %<>% DESeq()
+# normalize for diffs in sequencing depth and abundance per sample
+ONT_bottom8000.ds %<>% estimateSizeFactors()
+# gene-wise dispersion estimates across all samples
+ONT_bottom8000.ds %<>% estimateDispersions()
+# fit a neg. binomial GLM and compute Wald stat for each gene 
+ONT_bottom8000.ds %<>% nbinomWaldTest()
+
+ONT_bottom8000.results <- results(ONT_bottom8000.ds,independentFiltering = TRUE,alpha = 0.05)
+
+# identify genes with the desired adjusted p-value cut-off
+ONT_median8000.DGEgenes <- rownames(subset(ONT_median8000.results, padj<0.05)) 
+# extract rlog-transformed values into a matrix
+ONT_median8000_rlog.dge <- ONT_median8000.rlog[ONT_median8000.DGEgenes,] %>% assay
+# heatmap of DEG sorted by p.adjust
+pheatmap(ONT_median8000_rlog.dge, scale="row",
+         show_rownames=FALSE, main="ONT DGE",
+         color = colorRampPalette(c("blue", "red"))(100))
+
+# identify genes with the desired adjusted p-value cut-off
+ONT_top8000.DGEgenes <- rownames(subset(ONT_top8000.results, padj<0.05)) 
+# extract rlog-transformed values into a matrix
+ONT_top8000_rlog.dge <- ONT_top8000.rlog[ONT_top8000.DGEgenes,] %>% assay
+# heatmap of DEG sorted by p.adjust
+pheatmap(ONT_top8000_rlog.dge, scale="row",
+         show_rownames=FALSE, main="ONT DGE",
+         color = colorRampPalette(c("blue", "red"))(100))
+
+# identify genes with the desired adjusted p-value cut-off
+ONT_bottom8000.DGEgenes <- rownames(subset(ONT_bottom8000.results, padj<0.05)) 
+# extract rlog-transformed values into a matrix
+ONT_bottom8000_rlog.dge <- ONT_bottom8000.rlog[ONT_bottom8000.DGEgenes,] %>% assay
+# heatmap of DEG sorted by p.adjust
+pheatmap(ONT_bottom8000_rlog.dge, scale="row",
+         show_rownames=FALSE, main="ONT DGE",
+         color = colorRampPalette(c("blue", "red"))(100))
+```
+
+
+### Length Composition Analysis
+
+```{r}
+gencode.vM33.ONT.GeneLengths <- gencode.vM33.All.GeneLengths[row.names(ONT_DESeq.ds),]
+gencode.vM33.ONT.GeneLengths.overlap <- gencode.vM33.All.GeneLengths.filtered[row.names(ONT_DESeq_overlap.ds),]
+
+hist(gencode.vM33.ONT.GeneLengths$log2.GeneLength, freq = FALSE)
+
+ONT_medians <- apply(counts(ONT_DESeq.ds), 1, median)
+
+gencode.vM33.ONT.GeneLengths$medianCounts <- ONT_medians[match(rownames(gencode.vM33.ONT.GeneLengths), names(ONT_medians))]
+gencode.vM33.ONT.GeneLengths.overlap$medianCounts <- ONT_medians[match(rownames(gencode.vM33.ONT.GeneLengths.overlap), names(ONT_medians))]
+
+#Scatter plot of log(medianCounts) and log(geneLengths)
+plot(log2(medianCounts) ~ log2.GeneLength, data = gencode.vM33.ONT.GeneLengths, 
+     main = "Scatter Plot of log2(Median Counts) vs. log2(Gene Length)",
+     xlab = "log2(Gene Length)", ylab = "log2(Median Counts)", col = "black", pch = 16)
+
+```
+
+```{r}
+gencode.vM33.Illumina.GeneLengths <- gencode.vM33.All.GeneLengths[row.names(Illumina_DESeq.ds),]
+gencode.vM33.Illumina.GeneLengths.overlap <- gencode.vM33.All.GeneLengths.filtered[row.names(Illumina_DESeq_overlap.ds),]
+
+hist(gencode.vM33.Illumina.GeneLengths$log2.GeneLength, freq = FALSE)
+
+Illumina_medians <- apply(counts(Illumina_DESeq.ds), 1, median)
+
+gencode.vM33.Illumina.GeneLengths$medianCounts <- Illumina_medians[match(rownames(gencode.vM33.Illumina.GeneLengths), names(Illumina_medians))]
+gencode.vM33.Illumina.GeneLengths.overlap$medianCounts <- Illumina_medians[match(rownames(gencode.vM33.Illumina.GeneLengths.overlap), names(Illumina_medians))]
+
+#Scatter plot of log(medianCounts) and log(geneLengths)
+plot(log2(medianCounts) ~ log2.GeneLength, data = gencode.vM33.Illumina.GeneLengths, 
+     main = "Scatter Plot of log2(Median Counts) vs. log2(Gene Length)",
+     xlab = "log2(Gene Length)", ylab = "log2(Median Counts)", col = "black", pch = 16)
+```
+
+```{r}
+ONT_hist1 <- hist(gencode.vM33.ONT.GeneLengths$log2.GeneLength, freq = FALSE)
+Illumina_hist1 <- hist(gencode.vM33.Illumina.GeneLengths$log2.GeneLength, freq = FALSE)
+
+# Set the alpha (transparency) value, e.g., 0.5 for 50% transparency
+transparency <- 0.5
+
+# Create translucent colors using the rgb function
+red_translucent <- rgb(1, 0, 0, alpha = transparency)
+blue_translucent <- rgb(0, 0, 1, alpha = transparency)
+
+# Find the overall range of y values
+y_max <- max(c(ONT_hist1$counts, Illumina_hist1$counts))
+
+# Plot histograms with translucent colors and adjusted y-axis limits
+plot(ONT_hist1, col = red_translucent, ylim = c(0, y_max))  # first histogram
+plot(Illumina_hist1, col = blue_translucent, add = TRUE)     # second histogram
+```
+
+```{r}
+t.test(gencode.vM33.ONT.GeneLengths$log2.GeneLength, gencode.vM33.Illumina.GeneLengths$log2.GeneLength, alternative = "two.sided", var.equal = FALSE)
+```
+
+```{r}
+#increase transparency
+transparency <- 0.3
+# Create translucent colors using the rgb function
+red_translucent <- rgb(1, 0, 0, alpha = transparency)
+blue_translucent <- rgb(0, 0, 1, alpha = transparency)
+
+# Scatter plot of log(medianCounts) and log(geneLengths) for ONT data
+plot(log2(medianCounts) ~ log2.GeneLength, data = gencode.vM33.ONT.GeneLengths.overlap,
+     main = "Scatter Plot of log2(Median Counts) vs. log2(Gene Length)",
+     xlab = "log2(Gene Length)", ylab = "log2(Median Counts)", col = red_translucent, pch = 1,cex=0.1)
+
+# Add points for Illumina data on the same plot
+points(log2(medianCounts) ~ log2.GeneLength, data = gencode.vM33.Illumina.GeneLengths.overlap,
+       col = blue_translucent, pch = 2,cex=0.1)
+
+```
+Illumina overestimates/gives more read counts to longer genes. 
+
+###Fit distributions of the scatter plots. 
+
+```{r}
+#Combine the median gene counts from both platforms
+gencode.vM33.Illumina.GeneLengths$log2.medianCounts <- log2(gencode.vM33.Illumina.GeneLengths$medianCounts + 1)
+gencode.vM33.ONT.GeneLengths$log2.medianCounts <- log2(gencode.vM33.ONT.GeneLengths$medianCounts + 1)
+
+gencode.vM33.Illumina.GeneLengths.overlap$log2.medianCounts <- log2(gencode.vM33.Illumina.GeneLengths.overlap$medianCounts + 1)
+gencode.vM33.ONT.GeneLengths.overlap$log2.medianCounts <- log2(gencode.vM33.ONT.GeneLengths.overlap$medianCounts + 1)
+
+gencode.vM33.Combined.GeneLengths <- cbind(gencode.vM33.Illumina.GeneLengths.overlap,gencode.vM33.ONT.GeneLengths.overlap[,5:6])
+
+selected_columns1 <- 5:6
+prefix1 <- "Illumina_" 
+
+colnames(gencode.vM33.Combined.GeneLengths)[selected_columns1] <- paste0(prefix1,colnames(gencode.vM33.Illumina.GeneLengths.overlap)[selected_columns1])
+
+selected_columns2 <- 7:8
+prefix2 <- "ONT_"
+colnames(gencode.vM33.Combined.GeneLengths)[selected_columns2] <- paste0(prefix2,colnames(gencode.vM33.ONT.GeneLengths.overlap)[selected_columns1])
+``` 
+
+
+```{r}
+hist(gencode.vM33.Combined.GeneLengths$Illumina_log2.medianCounts,freq = FALSE)
+lines(density(gencode.vM33.Combined.GeneLengths$Illumina_log2.medianCounts))
+hist(gencode.vM33.Combined.GeneLengths$ONT_log2.medianCounts, freq = FALSE)
+lines(density(gencode.vM33.Combined.GeneLengths$ONT_log2.medianCounts))
+
+par(mar = c(5, 5, 2, 2))
+descdist(gencode.vM33.Combined.GeneLengths$Illumina_log2.medianCounts, discrete = FALSE)
+descdist(gencode.vM33.Combined.GeneLengths$ONT_log2.medianCounts, discrete = FALSE)
+```
+```{r warning=TRUE}
+
+cor(gencode.vM33.Combined.GeneLengths$Illumina_log2.medianCounts, gencode.vM33.Combined.GeneLengths$log2.GeneLength, method='pearson')
+
+cor(gencode.vM33.Combined.GeneLengths$ONT_log2.medianCounts, gencode.vM33.Combined.GeneLengths$log2.GeneLength, method='pearson')
+```
+
+Since the correlations are not linear for ONT, I will try to assess the correlation assuming the data is non-linearly correlated. 
+
+```{r}
+nlcor(gencode.vM33.Combined.GeneLengths$log2.GeneLength,gencode.vM33.Combined.GeneLengths$Illumina_log2.medianCounts,plt=T)
+
+nlcor(gencode.vM33.Combined.GeneLengths$log2.GeneLength,gencode.vM33.Combined.GeneLengths$ONT_log2.medianCounts,plt=T)
+```
+
+```{r}
+transparency1 <- 0.2
+transparency2 <- 0.1
+# Scatter plot of log(medianCounts) and log(geneLengths) for ONT data
+ggplot(gencode.vM33.ONT.GeneLengths.overlap, aes(x = log2.GeneLength, y = log2(medianCounts+1))) +
+  geom_point(aes(color = "ONT"), alpha = transparency1, size = 0.5) +
+  
+  # Add points for Illumina data on the same plot
+  geom_point(data = gencode.vM33.Illumina.GeneLengths.overlap, aes(x = log2.GeneLength, y = log2(medianCounts+1), color = "Illumina"), alpha = transparency2, size = 0.5) +
+  
+  # Add correlation line for Illumina data
+  geom_smooth(data = gencode.vM33.Illumina.GeneLengths.overlap, method = "lm", formula = y ~ x, se = FALSE, linetype = "solid", color = "blue") +
+  
+  # Add correlation line for ONT data
+  geom_smooth(method = "lm", formula = y ~ x, se = FALSE, linetype = "solid", color = "red") +
+  
+  # Customize the plot
+  labs(title = "Scatter Plot of log2(Median Counts) vs. log2(Gene Length)",
+       x = "log2(Gene Length)", y = "log2(Median Counts)",color="platform") +
+  scale_color_manual(values = c("ONT" = "red", "Illumina" = "blue")) +
+  # Increase the size of the legend
+  guides(color = guide_legend(override.aes = list(size = 4))) +
+  theme_minimal()
+```
+
+
+```{r}
+transparency1 <- 0.2
+transparency2 <- 0.1
+# Scatter plot of log(medianCounts) and log(geneLengths) for ONT data
+ggplot(gencode.vM33.ONT.GeneLengths.overlap, aes(x = log2.GeneLength, y = log2(medianCounts+1))) +
+  geom_point(aes(color = "ONT"), alpha = transparency1, size = 0.5) +
+  
+  # Add correlation line for ONT data
+  geom_smooth(method = "lm", formula = y ~ x, se = FALSE, linetype = "solid", color = "red") +
+  
+  # Customize the plot
+  labs(title = "Scatter Plot of log2(Median Counts) vs. log2(Gene Length)",
+       x = "log2(Gene Length)", y = "log2(Median Counts)",color="platform") +
+  # Increase the size of the legend
+  guides(color = guide_legend(override.aes = list(size = 4))) +
+  theme_minimal()
+```
+
+```{r}
+t.test()
+```
+
+
+There is negligible correlation between nanopore sequencing gene counts and gene length. 

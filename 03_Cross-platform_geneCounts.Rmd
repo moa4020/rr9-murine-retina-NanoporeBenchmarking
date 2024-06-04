@@ -1,0 +1,667 @@
+---
+title: "Cross-platform gene count comparison"
+author: 'Mohith Reddy Arikatla (CWID: moa4020)'
+date: "2024-01-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+PDD <- "/Users/mar/Library/CloudStorage/GoogleDrive-mohitharikatla.education@gmail.com/My Drive/RR9_MurineSequencingData/Retina/DESeq/PostDESeq.RData"
+
+load(PDD)
+library(apeglm)
+library(AnnotationDbi)
+library(DESeq2)
+library(dplyr)
+library(edgeR)
+library(EnsDb.Mmusculus.v79)
+library(EnhancedVolcano)
+library(fgsea)
+library(ggplot2)
+library(ggVennDiagram)
+library(goseq)
+library(clusterProfiler)
+library(magrittr)
+library(org.Mm.eg.db)
+library(patchwork)
+library(pheatmap)
+library(vsn)
+
+edb_m79 <- EnsDb.Mmusculus.v79
+orgdb <- org.Mm.eg.db
+```
+
+
+
+```{r}
+#Keep non-zero count genes only
+Illumina_featureCounts <- Illumina_featureCounts[rowSums(Illumina_featureCounts) > 0,]
+ONT_featureCounts <- ONT_featureCounts[rowSums(ONT_featureCounts) > 0,]
+
+intersection <- intersect(row.names(Illumina_featureCounts),row.names(ONT_featureCounts))
+
+Illumina_filtered_featureCounts <- Illumina_featureCounts[intersection,]
+ONT_filtered_featureCounts <- ONT_featureCounts[intersection,]
+
+```
+
+```{r}
+ONT_filtered_sample_info <- data.frame(
+  condition = gsub("^[^_]+_|\\d+$", "", colnames(ONT_filtered_featureCounts)),
+  flowcell = gsub("_.*$", "", colnames(ONT_filtered_featureCounts)),
+  mouse=gsub("^[^_]+_", "", colnames(ONT_filtered_featureCounts)),
+  row.names = colnames(ONT_filtered_featureCounts)
+)
+
+Illumina_filtered_sample_info <- data.frame(
+  condition = gsub("^[^_]+_|\\d+$", "", colnames(Illumina_filtered_featureCounts)),
+  mouse=gsub("^[^_]+_", "", colnames(Illumina_filtered_featureCounts)),
+  row.names = colnames(Illumina_filtered_featureCounts)
+)
+```
+
+```{r}
+
+
+Illumina_filtered_DESeq.ds <- DESeqDataSetFromMatrix(countData = Illumina_filtered_featureCounts, 
+                                   colData = Illumina_filtered_sample_info,
+                                   design = ~ condition)
+
+ONT_filtered_DESeq.ds <- DESeqDataSetFromMatrix(countData = ONT_filtered_featureCounts, 
+                                   colData = ONT_filtered_sample_info,
+                                   design = ~ condition)
+
+```
+
+### Test Correlation of counts for the same mouse across platforms
+
+```{r}
+# 'mouse' is the condition column
+mouse <- colData(ONT_filtered_DESeq.ds)$mouse
+
+# Convert count matrix to a data frame
+count_df <- as.data.frame(counts(ONT_filtered_DESeq.ds))
+
+# Get unique values in 'mouse'
+unique_mice <- unique(mouse)
+
+# Initialize an empty data frame to store averaged counts for ONT
+ONT_agg_counts <- data.frame(matrix(0, nrow = nrow(count_df), ncol = length(unique_mice)))
+colnames(ONT_agg_counts) <- unique_mice
+
+# Iterate over unique values and calculate mean counts
+for (m in unique_mice) {
+  col_indices <- which(mouse == m)
+  ONT_agg_counts[, m] <- as.integer(rowMeans(count_df[, col_indices, drop = FALSE]))
+}
+
+ONT_agg_sample_info <- data.frame(
+  condition = gsub("^[^_]+_|\\d+$", "", colnames(ONT_agg_counts)),
+  mouse=gsub("^[^_]+_", "", colnames(ONT_agg_counts)),
+  row.names = colnames(ONT_agg_counts)
+)
+
+# Convert back to DESeqDataSet
+ONT_agg.ds <- DESeqDataSetFromMatrix(countData = ONT_agg_counts, 
+                                   colData = ONT_agg_sample_info,
+                                   design = ~ condition)
+
+row.names(ONT_agg.ds) <- row.names(ONT_filtered_DESeq.ds)
+
+```
+
+```{r}
+# Extract gene counts data
+counts_ONT <- counts(ONT_agg.ds)
+counts_Illumina <- counts(Illumina_filtered_DESeq.ds)
+
+# Create an empty data frame to store results
+CompareCounts <- data.frame()
+
+# Create a list to store correlation results
+cor_results <- list()
+
+# Iterate over unique mice
+for (mouse in unique(ONT_agg.ds$mouse)) {
+  
+  # Subset counts for the current mouse
+  counts_condition_ONT <- counts_ONT[, ONT_agg.ds$mouse == mouse]
+  counts_condition_Illumina <- counts_Illumina[, Illumina_filtered_DESeq.ds$mouse == mouse]
+  
+  # Create a data frame for the current condition
+  current_comparison <- data.frame(
+    ONT = log2(counts_condition_ONT + 1),  # Add 1 to avoid log(0)
+    Illumina = log2(counts_condition_Illumina + 1)
+  )
+  
+  # Perform Spearman correlation test
+  spearman_cor <- cor.test(current_comparison$ONT, current_comparison$Illumina, method="spearman")
+  cor_results[[mouse]] <- spearman_cor$estimate
+  cat("Spearman correlation for", mouse, ":", spearman_cor$estimate, "\n")
+  
+  plot(
+    current_comparison$ONT,
+    current_comparison$Illumina,
+    cex = 0.1,
+    main = paste("ONT vs Illumina for", mouse),
+    xlab = "ONT counts",
+    ylab = "Illumina counts"
+  )
+}
+
+
+```
+
+### Pick random mice to compare against each other for spearman r value
+
+```{r}
+# Extract gene counts data
+counts_ONT <- counts(ONT_agg.ds)
+counts_Illumina <- counts(Illumina_filtered_DESeq.ds)
+
+# Create an empty data frame to store results
+CompareCounts <- data.frame()
+
+# Create a list to store correlation results
+cor_results <- list()
+
+# Set seed for reproducibility
+set.seed(123)
+
+# Number of random comparisons
+num_comparisons <- 5  # Adjust as needed
+
+# Randomly select mice for comparison
+selected_mice <- sample(unique(ONT_agg.ds$mouse), num_comparisons)
+
+# Iterate over selected mice
+for (ONT_mouse in selected_mice) {
+  
+  # Subset counts for the current condition
+  counts_mouse_ONT <- counts_ONT[, ONT_agg.ds$mouse == ONT_mouse]
+  
+  # Randomly select a mouse from Illumina dataset
+  random_mouse_Illumina <- sample(unique(Illumina_filtered_DESeq.ds$mouse), 1)
+  counts_mouse_Illumina <- counts_Illumina[, Illumina_filtered_DESeq.ds$mouse == random_mouse_Illumina]
+  
+  # Create a data frame for the current comparison
+  current_comparison <- data.frame(
+    ONT = log2(counts_mouse_ONT + 1),  # Add 1 to avoid log(0)
+    Illumina = log2(counts_mouse_Illumina + 1)
+  )
+  
+  # Perform Spearman correlation test
+  spearman_cor <- cor.test(current_comparison$ONT, current_comparison$Illumina, method="spearman")
+  cor_results[[paste(ONT_mouse, "vs", random_mouse_Illumina)]] <- spearman_cor$estimate
+  cat("Spearman correlation for", ONT_mouse, "vs", random_mouse_Illumina, ":", spearman_cor$estimate, "\n")
+  plot(
+    current_comparison$ONT,
+    current_comparison$Illumina,
+    cex = 0.1,
+    main = paste("ONT vs Illumina for", ONT_mouse, "vs", random_mouse_Illumina),
+    xlab = "ONT counts",
+    ylab = "Illumina counts"
+  )
+}
+
+```
+
+Because the correlation r value is not a reliable metric, I decided to use only the differentially expressed genes between conditions to make this assessment.
+
+### Perform DESeq
+
+```{r}
+ONT_agg.ds %<>% DESeq()
+# normalize for diffs in sequencing depth and abundance per sample
+ONT_agg.ds %<>% estimateSizeFactors()
+# gene-wise dispersion estimates across all samples
+ONT_agg.ds %<>% estimateDispersions()
+# fit a neg. binomial GLM and compute Wald stat for each gene 
+ONT_agg.ds %<>% nbinomWaldTest()
+
+ONT_agg.ds
+
+
+Illumina_filtered_DESeq.ds %<>% DESeq()
+# normalize for diffs in sequencing depth and abundance per sample
+Illumina_filtered_DESeq.ds %<>% estimateSizeFactors()
+# gene-wise dispersion estimates across all samples
+Illumina_filtered_DESeq.ds %<>% estimateDispersions()
+# fit a neg. binomial GLM and compute Wald stat for each gene 
+Illumina_filtered_DESeq.ds %<>% nbinomWaldTest()
+
+Illumina_filtered_DESeq.ds
+```
+
+```{r}
+ONT_agg.results <- results(ONT_agg.ds, independentFiltering = TRUE, alpha = 0.05)
+# the first line will tell you which comparison was done to achieve the log2FC 
+head(ONT_agg.results)
+
+Illumina_filtered_DESeq.results <- results(Illumina_filtered_DESeq.ds, independentFiltering = TRUE, alpha = 0.05)
+# the first line will tell you which comparison was done to achieve the log2FC 
+head(Illumina_filtered_DESeq.results)
+```
+
+```{r}
+summary(ONT_agg.results)
+summary(Illumina_filtered_DESeq.results)
+```
+
+### Sort by log2FoldChange
+
+```{r}
+ONT_agg.results.sorted <- ONT_agg.results %>% `[`(order(.$log2FoldChange),)
+
+Illumina_filtered_DESeq.results.sorted <- Illumina_filtered_DESeq.results %>% `[`(order(.$log2FoldChange),)
+
+intersect <- list(ONT = row.names(ONT_agg.results.sorted)[1:500], Illumina = row.names(Illumina_filtered_DESeq.results.sorted)[1:500])
+
+# 2D Venn diagram
+ggVennDiagram(intersect)
+
+intersect <- list(ONT = row.names(ONT_agg.results.sorted)[23776:24276], Illumina = row.names(Illumina_filtered_DESeq.results.sorted)[23776:24276])
+
+# 2D Venn diagram
+ggVennDiagram(intersect)
+```
+
+### Sort by padj
+
+```{r}
+ONT_agg.results.sorted <- ONT_agg.results %>% `[`(order(.$padj),)
+head(ONT_agg.results.sorted)
+Illumina_filtered_DESeq.results.sorted <- Illumina_filtered_DESeq.results %>% `[`(order(.$padj),)
+head(Illumina_filtered_DESeq.results.sorted)
+intersect <- list(ONT = row.names(ONT_agg.results.sorted)[1:500], Illumina = row.names(Illumina_filtered_DESeq.results.sorted)[1:500])
+
+# 2D Venn diagram
+ggVennDiagram(intersect)
+
+intersect <- list(ONT = row.names(ONT_agg.results.sorted)[23776:24276], Illumina = row.names(Illumina_filtered_DESeq.results.sorted)[23776:24276])
+
+# 2D Venn diagram
+ggVennDiagram(intersect)
+```
+
+### Sort by stat
+
+```{r}
+ONT_agg.results.sorted <- ONT_agg.results %>% `[`(order(-.$stat),)
+head(ONT_agg.results.sorted)
+Illumina_filtered_DESeq.results.sorted <- Illumina_filtered_DESeq.results %>% `[`(order(-.$stat),)
+head(Illumina_filtered_DESeq.results.sorted)
+intersect <- list(ONT = row.names(ONT_agg.results.sorted)[1:500], Illumina = row.names(Illumina_filtered_DESeq.results.sorted)[1:500])
+
+# 2D Venn diagram
+ggVennDiagram(intersect)
+```
+
+### Sort by pvalue
+
+```{r}
+ONT_agg.results.sorted <- ONT_agg.results %>% `[`(order(.$pvalue),)
+head(ONT_agg.results.sorted)
+Illumina_filtered_DESeq.results.sorted <- Illumina_filtered_DESeq.results %>% `[`(order(.$pvalue),)
+head(Illumina_filtered_DESeq.results.sorted)
+intersect <- list(ONT = row.names(ONT_agg.results.sorted)[1:500], Illumina = row.names(Illumina_filtered_DESeq.results.sorted)[1:500])
+
+# 2D Venn diagram
+ggVennDiagram(intersect)
+
+intersect <- list(ONT = row.names(ONT_agg.results.sorted)[23776:24276], Illumina = row.names(Illumina_filtered_DESeq.results.sorted)[23776:24276])
+
+# 2D Venn diagram
+ggVennDiagram(intersect)
+```
+
+### Sort by baseMean value
+
+```{r}
+ONT_agg.results.sorted <- ONT_agg.results %>% `[`(order(.$baseMean),)
+head(ONT_agg.results.sorted)
+Illumina_filtered_DESeq.results.sorted <- Illumina_filtered_DESeq.results %>% `[`(order(.$baseMean),)
+head(Illumina_filtered_DESeq.results.sorted)
+intersect <- list(ONT = row.names(ONT_agg.results.sorted)[1:500], Illumina = row.names(Illumina_filtered_DESeq.results.sorted)[1:500])
+
+# 2D Venn diagram
+ggVennDiagram(intersect)
+
+intersect <- list(ONT = row.names(ONT_agg.results.sorted)[23776:24276], Illumina = row.names(Illumina_filtered_DESeq.results.sorted)[23776:24276])
+
+# 2D Venn diagram
+ggVennDiagram(intersect)
+```
+
+## Same comparisons but now without merging ONT replicates
+
+```{r}
+head(ONT_filtered_DESeq.ds)
+
+ONT_FC1_filtered_DESeq.ds <- ONT_filtered_DESeq.ds[,ONT_filtered_DESeq.ds$flowcell=="FC1"]
+```
+
+```{r}
+# Extract gene counts data
+counts_ONT <- counts(ONT_FC1_filtered_DESeq.ds)
+counts_Illumina <- counts(Illumina_filtered_DESeq.ds)
+
+# Create an empty data frame to store results
+CompareCounts <- data.frame()
+
+# Create a list to store correlation results
+cor_results <- list()
+
+
+# Iterate over unique mice
+for (mouse in unique(ONT_FC1_filtered_DESeq.ds$mouse)) {
+  
+  # Subset counts for the current mouse
+  counts_mouse_ONT <- counts_ONT[, ONT_FC1_filtered_DESeq.ds$mouse == mouse]
+  counts_mouse_Illumina <- counts_Illumina[, Illumina_filtered_DESeq.ds$mouse == mouse]
+  
+  # Create a data frame for the current condition
+  current_comparison <- data.frame(
+    ONT = log2(counts_mouse_ONT + 1),  # Add 1 to avoid log(0)
+    Illumina = log2(counts_mouse_Illumina + 1)
+  )
+  
+  # Perform Spearman correlation test
+  spearman_cor <- cor.test(current_comparison$ONT, current_comparison$Illumina, method="spearman")
+  cor_results[[mouse]] <- spearman_cor$estimate
+  cat("Spearman correlation for", mouse, ":", spearman_cor$estimate, "\n")
+  
+  plot(
+    current_comparison$ONT,
+    current_comparison$Illumina,
+    cex = 0.1,
+    main = paste("ONT vs Illumina for", mouse),
+    xlab = "ONT counts",
+    ylab = "Illumina counts"
+  )
+}
+
+
+```
+
+### Perform DESeq
+
+```{r}
+ONT_filtered_DESeq.ds %<>% DESeq()
+# normalize for diffs in sequencing depth and abundance per sample
+ONT_filtered_DESeq.ds %<>% estimateSizeFactors()
+# gene-wise dispersion estimates across all samples
+ONT_filtered_DESeq.ds %<>% estimateDispersions()
+# fit a neg. binomial GLM and compute Wald stat for each gene 
+ONT_filtered_DESeq.ds %<>% nbinomWaldTest()
+
+ONT_filtered_DESeq.ds
+```
+
+```{r}
+ONT_filtered_DESeq.results <- results(ONT_filtered_DESeq.ds, independentFiltering = TRUE, alpha = 0.05)
+# the first line will tell you which comparison was done to achieve the log2FC 
+head(ONT_filtered_DESeq.results)
+
+summary(ONT_filtered_DESeq.results)
+```
+
+### Sort by log2FoldChange
+
+```{r}
+ONT_filtered_DESeq.results.sorted <- ONT_filtered_DESeq.results %>% `[`(order(.$log2FoldChange),)
+
+Illumina_filtered_DESeq.results.sorted <- Illumina_filtered_DESeq.results %>% `[`(order(.$log2FoldChange),)
+
+intersect <- list(ONT = row.names(ONT_filtered_DESeq.results.sorted)[1:500], Illumina = row.names(Illumina_filtered_DESeq.results.sorted)[1:500])
+
+# 2D Venn diagram
+ggVennDiagram(intersect)
+
+intersect <- list(ONT = row.names(ONT_filtered_DESeq.results.sorted)[23776:24276], Illumina = row.names(Illumina_filtered_DESeq.results.sorted)[23776:24276])
+
+# 2D Venn diagram
+ggVennDiagram(intersect)
+```
+
+### Sort by padj
+
+```{r}
+ONT_filtered_DESeq.results.sorted <- ONT_filtered_DESeq.results %>% `[`(order(.$padj),)
+
+Illumina_filtered_DESeq.results.sorted <- Illumina_filtered_DESeq.results %>% `[`(order(.$padj),)
+
+intersect <- list(ONT = row.names(ONT_filtered_DESeq.results.sorted)[1:500], Illumina = row.names(Illumina_filtered_DESeq.results.sorted)[1:500])
+
+# 2D Venn diagram
+ggVennDiagram(intersect)
+
+intersect <- list(ONT = row.names(ONT_filtered_DESeq.results.sorted)[23776:24276], Illumina = row.names(Illumina_filtered_DESeq.results.sorted)[23776:24276])
+
+# 2D Venn diagram
+ggVennDiagram(intersect)
+```
+
+### Sort by pvalue
+
+```{r}
+ONT_filtered_DESeq.results.sorted <- ONT_filtered_DESeq.results %>% `[`(order(.$pvalue),)
+
+Illumina_filtered_DESeq.results.sorted <- Illumina_filtered_DESeq.results %>% `[`(order(.$pvalue),)
+
+intersect <- list(ONT = row.names(ONT_filtered_DESeq.results.sorted)[1:500], Illumina = row.names(Illumina_filtered_DESeq.results.sorted)[1:500])
+
+# 2D Venn diagram
+ggVennDiagram(intersect)
+
+intersect <- list(ONT = row.names(ONT_filtered_DESeq.results.sorted)[23776:24276], Illumina = row.names(Illumina_filtered_DESeq.results.sorted)[23776:24276])
+
+# 2D Venn diagram
+ggVennDiagram(intersect)
+```
+
+### Sort by stat value
+
+```{r}
+ONT_filtered_DESeq.results.sorted <- ONT_filtered_DESeq.results %>% `[`(order(.$stat),)
+
+Illumina_filtered_DESeq.results.sorted <- Illumina_filtered_DESeq.results %>% `[`(order(.$stat),)
+
+intersect <- list(ONT = row.names(ONT_filtered_DESeq.results.sorted)[1:500], Illumina = row.names(Illumina_filtered_DESeq.results.sorted)[1:500])
+
+# 2D Venn diagram
+ggVennDiagram(intersect)
+
+intersect <- list(ONT = row.names(ONT_filtered_DESeq.results.sorted)[23776:24276], Illumina = row.names(Illumina_filtered_DESeq.results.sorted)[23776:24276])
+
+# 2D Venn diagram
+ggVennDiagram(intersect)
+```
+
+### Sort by baseMean value
+
+```{r}
+ONT_filtered_DESeq.results.sorted <- ONT_filtered_DESeq.results %>% `[`(order(.$baseMean),)
+
+Illumina_filtered_DESeq.results.sorted <- Illumina_filtered_DESeq.results %>% `[`(order(.$baseMean),)
+
+intersect <- list(ONT = row.names(ONT_filtered_DESeq.results.sorted)[1:500], Illumina = row.names(Illumina_filtered_DESeq.results.sorted)[1:500])
+
+# 2D Venn diagram
+ggVennDiagram(intersect)
+
+intersect <- list(ONT = row.names(ONT_filtered_DESeq.results.sorted)[23776:24276], Illumina = row.names(Illumina_filtered_DESeq.results.sorted)[23776:24276])
+
+# 2D Venn diagram
+ggVennDiagram(intersect)
+```
+
+### Gene counts Correlation test only between common DEGs/metric with most common genes
+
+Use stat value
+
+```{r}
+ONT_significant_results <-  ONT_filtered_DESeq.results[which(ONT_filtered_DESeq.results$padj<0.05),]
+Illumina_significant_results <-  Illumina_filtered_DESeq.results[which(Illumina_filtered_DESeq.results$padj<0.05),]
+
+common.sig.genes <- intersect(row.names(ONT_significant_results),row.names(Illumina_significant_results))
+
+ONT_significant_counts <- counts(ONT_agg.ds[common.sig.genes,])
+Illumina_significant_counts <- counts(Illumina_filtered_DESeq.ds[common.sig.genes,])
+```
+
+```{r}
+head(ONT_significant_counts)
+head(Illumina_significant_counts)
+```
+```{r}
+# Create an empty data frame to store results
+CompareCounts <- data.frame()
+
+# Create a list to store correlation results
+cor_results <- list()
+
+# Iterate over unique mice
+for (mouse in unique(ONT_agg.ds$mouse)) {
+  
+  # Subset counts for the current mouse
+  counts_condition_ONT <- ONT_significant_counts[,mouse]
+  counts_condition_Illumina <- Illumina_significant_counts[, mouse]
+  
+  # Create a data frame for the current condition
+  current_comparison <- data.frame(
+    ONT = log2(counts_condition_ONT + 1),  # Add 1 to avoid log(0)
+    Illumina = log2(counts_condition_Illumina + 1)
+  )
+  
+  # Perform Spearman correlation test
+  spearman_cor <- cor.test(current_comparison$ONT, current_comparison$Illumina, method="spearman")
+  cor_results[[mouse]] <- spearman_cor$estimate
+  cat("Spearman correlation for", mouse, ":", spearman_cor$estimate, "\n")
+  
+  plot(
+    current_comparison$ONT,
+    current_comparison$Illumina,
+    cex = 0.1,
+    main = paste("ONT vs Illumina for", mouse),
+    xlab = "ONT counts",
+    ylab = "Illumina counts"
+  )
+}
+```
+
+Random mouse comparison
+
+```{r}
+# Set seed for reproducibility
+set.seed(123)
+
+# Number of random comparisons
+num_comparisons <- 10  # Adjust as needed
+
+# Randomly select mice for comparison
+selected_mice <- sample(unique(ONT_agg.ds$mouse), num_comparisons)
+
+# Iterate over selected mice
+for (ONT_mouse in selected_mice) {
+  
+  # Subset counts for the current condition
+  counts_mouse_ONT <- ONT_significant_counts[, ONT_mouse]
+  
+  # Randomly select a mouse from Illumina dataset
+  random_mouse_Illumina <- sample(unique(Illumina_filtered_DESeq.ds$mouse), 1)
+  counts_mouse_Illumina <- Illumina_significant_counts[, random_mouse_Illumina]
+  
+  # Create a data frame for the current comparison
+  current_comparison <- data.frame(
+    ONT = log2(counts_mouse_ONT + 1),  # Add 1 to avoid log(0)
+    Illumina = log2(counts_mouse_Illumina + 1)
+  )
+  
+  # Perform Spearman correlation test
+  spearman_cor <- cor.test(current_comparison$ONT, current_comparison$Illumina, method="spearman")
+  cor_results[[paste(ONT_mouse, "vs", random_mouse_Illumina)]] <- spearman_cor$estimate
+  cat("Spearman correlation for", ONT_mouse, "vs", random_mouse_Illumina, ":", spearman_cor$estimate, "\n")
+  plot(
+    current_comparison$ONT,
+    current_comparison$Illumina,
+    cex = 0.1,
+    main = paste("ONT vs Illumina for", ONT_mouse, "vs", random_mouse_Illumina),
+    xlab = "ONT counts",
+    ylab = "Illumina counts"
+  )
+}
+```
+
+# Normalise counts before comparison -FPKM 
+
+```{r}
+
+ONTSpaceflightCounts <- apply(log2(counts(ONT_agg.ds[,ONT_agg.ds$condition=="F"])+1), MARGIN = 1, median)
+ONTGroundControlCounts <- apply(log2(counts(ONT_agg.ds[,ONT_agg.ds$condition=="GC"])+1), MARGIN = 1, median)
+
+IlluminaSpaceflightCounts <- apply(log2(counts(Illumina_filtered_DESeq.ds[,Illumina_filtered_DESeq.ds$condition=="F"])+1), MARGIN = 1, median)
+IlluminaGroundControlCounts <- apply(log2(counts(Illumina_filtered_DESeq.ds[,Illumina_filtered_DESeq.ds$condition=="GC"])+1), MARGIN = 1, median)
+```
+
+```{r}
+
+SpaceCountsCrossPlatform <- data.frame(
+  ONTSpaceflightCounts <- ONTSpaceflightCounts,
+  IlluminaSpaceflightCounts <- IlluminaSpaceflightCounts
+)
+
+GroundConrolCountsCrossPlatform <- data.frame(
+  ONTGroundControlCounts <- ONTGroundControlCounts,
+  IlluminaGroundControlCounts <- IlluminaGroundControlCounts
+)
+
+#increase transparency
+transparency <- 0.3
+# Create translucent colors using the rgb function
+red_translucent <- rgb(1, 0, 0, alpha = transparency)
+blue_translucent <- rgb(0, 0, 1, alpha = transparency)
+
+# Scatter plot of log(medianCounts) and log(geneLengths) for ONT data
+# Assuming you have the necessary dataframes: SpaceCountsCrossPlatform and GroundConrolCountsCrossPlatform
+
+# Load the ggplot2 library
+library(ggplot2)
+
+# Set transparency
+transparency1 <- 0.1
+transparency2 <- 0.2
+# Scatter plot of log(medianCounts) and log(geneLengths) for ONT data
+ggplot(SpaceCountsCrossPlatform, aes(x = ONTSpaceflightCounts, y = IlluminaSpaceflightCounts)) +
+  geom_point(position = position_jitter(width = 0.1, height = 0.1), alpha = transparency2, color = "blue", shape = 1, size = 0.2) +
+  
+  # Add points for Illumina data on the same plot
+  geom_point(data = GroundConrolCountsCrossPlatform, aes(x = ONTGroundControlCounts, y = IlluminaGroundControlCounts),
+             position = position_jitter(width = 0.1, height = 0.1), alpha = transparency1, color = "orange", shape = 2, size = 0.2) +
+  
+  # Add correlation lines within individual dataframes
+  geom_smooth(data = SpaceCountsCrossPlatform, aes(color = "blue"), method = "lm", se = FALSE) +
+  
+  # Customize axis labels and plot title
+  labs(
+    x = "ONT log2(median) Counts",
+    y = "Illumina log2(median) Counts",
+    title = "Cross Platform Comparison of Counts"
+  ) +
+  
+  # Add legend
+  scale_color_manual(values = c("blue" = "blue", "orange" = "orange"), name = "Condition", labels=c("Space Flight", "Ground Control")) +
+  
+  # Add theme for better aesthetics
+  theme_minimal()
+
+```
+
+```{r}
+
+
+
+```
+

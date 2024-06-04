@@ -1,0 +1,264 @@
+---
+title: "Isoform_Analyses"
+author: 'Mohith Reddy Arikatla (CWID: moa4020)'
+date: "2024-02-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#BiocManager::install("IsoformSwitchAnalyzeR")
+library(IsoformSwitchAnalyzeR)
+library(dplyr)
+library(DEXSeq)
+library(BiocParallel)
+load(file="PostDEXSeq.RData")
+```
+
+Illumina transcript counts curation
+```{}
+file_list <- list.files(path = "/Users/mar/Library/CloudStorage/GoogleDrive-mohitharikatla.education@gmail.com/My Drive/RR9_MurineSequencingData/Thesis/02_rr9/03_Isoform_analysis/Illumina_isoformCounts", pattern = "\\.results$", full.names = TRUE)
+
+Illumina_counts_combined <- data.frame()
+colNames <- c()
+rowNames <- c()
+
+for (file in file_list) {
+  #Save filename for column id
+  filename <- basename(file)
+  #Read each file
+  table <- read.table(file, header=TRUE)
+  #Only keep transcript_ids and expected counts
+  table_df <- data.frame(table[,5],row.names = table[,1])
+  
+  #Save the basename as the column name (temporary)
+  colnames(table_df) <- gsub("_trimmed.Aligned.toTranscriptome.out.bam.isoforms.results","",filename)
+  #Save the basename as the column name (permanent)
+  colNames[length(colNames)+1] <- gsub("_trimmed.Aligned.toTranscriptome.out.bam.isoforms.results","",filename)
+  #Merge the dataframe based on row names
+  Illumina_counts_combined <- data.frame(merge(Illumina_counts_combined,table_df,by=0,all=TRUE))
+  #Save row names (temporary)
+  rowNames <- Illumina_counts_combined$Row.names
+  #Remove the column named Row.names from Illumina_counts_combined (generated in the previous step)
+  Illumina_counts_combined <- data.frame(Illumina_counts_combined[,-1],row.names = rowNames)
+  #Update column names
+  colnames(Illumina_counts_combined) <- colNames
+}
+
+write.csv(Illumina_counts_combined,file="/Users/mar/Library/CloudStorage/GoogleDrive-mohitharikatla.education@gmail.com/My Drive/RR9_MurineSequencingData/Thesis/02_rr9/03_Isoform_analysis/Illumina_isoformCounts/Illumina_counts_combined.csv")
+```
+
+ONT transcript counts curation
+```{}
+
+file_list <- list.files(path = "/Users/mar/Library/CloudStorage/GoogleDrive-mohitharikatla.education@gmail.com/My Drive/RR9_MurineSequencingData/Thesis/02_rr9/03_Isoform_analysis/ONT_transcriptCounts", pattern = "\\counts.tsv$", full.names = TRUE)
+
+ONT_counts_combined <- data.frame()
+colNames <- c()
+rowNames <- c()
+
+# Loop through each file and populate ONT_counts_combined
+for (file in file_list) {
+  #Save filename for column id
+  filename <- basename(file)
+  #Read each table
+  df <- read.table(file, header = FALSE, sep = "\t", row.names = 1)
+  #Save the basename as the column name (temporary)
+  colnames(df) <- gsub(".transcript_counts.tsv","",filename)
+  #Save the basename as the column name (permanent)
+  colNames[length(colNames)+1] <- gsub(".transcript_counts.tsv","",filename)
+  #Merge the dataframe based on row names
+  ONT_counts_combined <- data.frame(merge(ONT_counts_combined,df,by=0,all=TRUE))
+  #Save row names (temporary)
+  rowNames <- ONT_counts_combined$Row.names
+  #Remove the column named Row.names from ONT_counts_combined (generated in the previous step)
+  ONT_counts_combined <- data.frame(ONT_counts_combined[,-1],row.names = rowNames)
+  #Update column names
+  colnames(ONT_counts_combined) <- colNames 
+}
+
+write.csv(ONT_counts_combined,file="/Users/mar/Library/CloudStorage/GoogleDrive-mohitharikatla.education@gmail.com/My Drive/RR9_MurineSequencingData/Thesis/02_rr9/03_Isoform_analysis/ONT_transcriptCounts/ONT_counts_combined.csv")
+```
+
+### Load HTSeq count data
+
+```{}
+inDir="/Users/mar/Library/CloudStorage/GoogleDrive-mohitharikatla.education@gmail.com/My Drive/RR9_MurineSequencingData/Thesis/02_rr9/03_Isoform_analysis/HTSeq_counts"
+
+IlluminaCountFiles <- list.files(paste0(inDir,"/Illumina"), pattern="clean.txt$", full.names=TRUE)
+
+IlluminaBaseNames <- sub("\\_.*", "",basename(IlluminaCountFiles))
+
+flattenedFile = list.files(inDir, pattern="gff$", full.names=TRUE)
+basename(flattenedFile)
+
+IlluminaSampleData <- data.frame(row.names = IlluminaBaseNames, mouse=IlluminaBaseNames, condition=gsub("\\d", "", IlluminaBaseNames))
+
+
+ONTCountFiles <- list.files(paste0(inDir,"/ONT"), pattern="_clean.txt$", full.names=TRUE)
+
+ONTBaseNames <- gsub("_clean.txt","",basename(ONTCountFiles))
+
+ONTSampleData <- data.frame(row.names = ONTBaseNames, flowcell=sub("-.*","",ONTBaseNames),mouse=sub(".*-","",ONTBaseNames),condition=gsub("\\d","",sub(".*-","",ONTBaseNames)))
+
+```
+
+### Build DEXSeq datasets
+
+```{}
+Illumina.dxd = DEXSeqDataSetFromHTSeq(
+  IlluminaCountFiles,sampleData = IlluminaSampleData,
+  design = ~ mouse + exon + condition:exon,
+  flattenedfile = flattenedFile)
+
+ONT.dxd = DEXSeqDataSetFromHTSeq(
+  ONTCountFiles,sampleData = ONTSampleData,
+  design = ~ mouse + exon + flowcell + condition:exon,
+  flattenedfile = flattenedFile)
+
+#save.image(file = "dxdbuilt.RData")
+```
+
+```{}
+dxdbuilt <- "dxdbuilt.RData"
+load(dxdbuilt)
+```
+
+### Remove "0" rowSums rows
+
+```{}
+rows_to_remove.Illumina <- which(rowSums(featureCounts(Illumina.dxd)) == 0)
+# Remove rows with row sums equal to 0
+Illumina.filtered.dxd <- Illumina.dxd[-rows_to_remove.Illumina, , drop = FALSE]
+
+rows_to_remove.ONT <- which(rowSums(featureCounts(ONT.dxd)) == 0)
+# Remove rows with row sums equal to 0
+ONT.filtered.dxd <- ONT.dxd[-rows_to_remove.ONT, , drop = FALSE]
+
+```
+
+
+### Estimate Size Factors
+
+```{}
+BPPARAM = MulticoreParam(4)
+Illumina.filtered.dxd <- estimateSizeFactors(Illumina.filtered.dxd)
+ONT.filtered.dxd <- estimateSizeFactors(ONT.filtered.dxd)
+```
+
+### Dispersion Estimation
+
+```{}
+Illumina.filtered.dxd <- estimateDispersions(Illumina.filtered.dxd, BPPARAM=BPPARAM)
+ONT.filtered.dxd <- estimateDispersions(ONT.filtered.dxd, BPPARAM=BPPARAM)
+
+```
+
+```{}
+save.image(file="PostDispersionEstimates.RData")
+load(file="PostDispersionEstimates.RData")
+```
+
+
+### Test for Deviance
+
+```{}
+Illumina.filtered.dxd = testForDEU( Illumina.filtered.dxd,reducedModel = ~ mouse + exon)
+ONT.filtered.dxd = testForDEU( ONT.filtered.dxd,reducedModel = ~ mouse + exon)
+
+save.image(file="PostDEUTest.RData")
+```
+
+### Calculate Exon Fold Change
+
+```{}
+load(file="PostDEUTest.RData")
+Illumina.filtered.dxd = estimateExonFoldChanges( Illumina.filtered.dxd, fitExpToVar="condition", BPPARAM=BPPARAM)
+ONT.filtered.dxd = estimateExonFoldChanges( ONT.filtered.dxd, fitExpToVar="condition", BPPARAM=BPPARAM)
+```
+
+### Save Results 
+```{}
+
+Illumina.dxr1 = DEXSeqResults( Illumina.filtered.dxd)
+ONT.dxr2 = DEXSeqResults( ONT.filtered.dxd)
+```
+
+```{}
+save.image(file="PostDEXSeq.RData")
+```
+
+```{r}
+load(file="PostDEXSeq.RData")
+```
+
+```{r}
+plotDispEsts( Illumina.dxr1 )
+plotDispEsts( ONT.dxr1 )
+```
+```{r}
+table(Illumina.dxr1$padj<0.05)
+```
+```{r}
+table(ONT.dxr1$padj<0.05)
+```
+
+```{r}
+table ( tapply( Illumina.dxr1$padj < 0.05, Illumina.dxr1$groupID, any ) )
+which(tapply( Illumina.dxr1$padj < 0.05, Illumina.dxr1$groupID, any ))
+```
+
+```{}
+table ( tapply( ONT.dxr1$padj < 0.05, ONT.dxr1$groupID, any ) )
+```
+
+Mean expression versus log2 fold change plot. Significant hits at an FDR=0.05 are coloured in red. 
+```{r}
+plotMA( Illumina.dxr1, cex=0.8, alpha = 0.05, main="Illumina Mean Expression vs Log2FoldChange")
+
+
+plotMA( ONT.dxr2, cex=0.8, alpha = 0.05, ylim = c(-30,30), main="ONT Mean Expression vs Log2FoldChange")
+```
+```{r}
+genesofInterest <- names(table(Illumina.dxr1$groupID[Illumina.dxr1$padj<0.05]))
+genesofInterest[length(genesofInterest)+1] <- "ENSMUSG00000034837.13" 
+
+#DEXSeqHTML( ONT.dxr2,file = "ONT.dxr2", FDR=0.75, color=c("#FF000080", "#0000FF80") )
+DEXSeqHTML( Illumina.dxr1,genes=genesofInterest,path="Illumina_DEXSeqReport",file="Illumina_testForDEU.html", color=c("#FF000080", "#0000FF80") )
+```
+
+```{r}
+
+DEXSeqHTML(ONT.dxr2, genes=genesofInterest, path="ONT_DEXSeqReport", file="ONT_testForDEU.html", color=c("#FF000080", "#0000FF80"))
+
+```
+
+```{r}
+ONT_rowSums <- rowSums(counts(ONT.dxr1))
+ONT_rowSumsOrdered <- ONT_rowSums[order(-ONT_rowSums)]
+```
+
+```{r}
+ONT_rowSumsOrdered[1:20]
+```
+
+```{r warning=FALSE}
+plotDEXSeq(ONT.dxr1, "ENSMUSG00000030324.9", legend=TRUE, cex.axis=1.2, cex=1.3, lwd=2 )
+```
+```{r warning=FALSE}
+plotDEXSeq( ONT.dxr1, "ENSMUSG00000030324.9", expression=FALSE, norCounts=TRUE,
+   legend=TRUE, cex.axis=1.2, cex=1.3, lwd=2 )
+```
+```{r warning=FALSE}
+plotDEXSeq( ONT.dxr1, "ENSMUSG00000029064.16", expression=FALSE, norCounts=TRUE,
+   legend=TRUE, cex.axis=1.2, cex=1.3, lwd=2 )
+```
+```{r warning=F}
+plotDEXSeq( ONT.dxr1, "ENSMUSG00000034837.13", expression=FALSE, norCounts=TRUE,
+   legend=TRUE, cex.axis=1.2, cex=1.3, lwd=2 )
+```
+```{r}
+plotDEXSeq( Illumina.dxr1, "ENSMUSG00000034837.13", expression=FALSE, norCounts=TRUE,
+   legend=TRUE, cex.axis=1.2, cex=1.3, lwd=2 )
+```
+

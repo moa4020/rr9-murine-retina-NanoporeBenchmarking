@@ -1,0 +1,451 @@
+---
+title: "OverlapGO"
+author: 'Mohith Reddy Arikatla (CWID: moa4020)'
+date: "2024-01-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+FILE_PDo="PostDESeq_overlap.RData"
+load(FILE_PDo)
+
+library(htmltools)
+library(data.table)
+library(DESeq2)
+library(magrittr)
+library(edgeR)
+library(enrichplot)
+library(goseq)
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(ggupset)
+library(ggrepel)
+library(pheatmap)
+library(EnhancedVolcano)
+library(apeglm)
+library(patchwork)
+library(AnnotationDbi)
+library(org.Mm.eg.db)
+library(TxDb.Mmusculus.UCSC.mm10.ensGene)
+library(TxDb.Mmusculus.UCSC.mm39.refGene)
+library(EnsDb.Mmusculus.v79)
+library(clusterProfiler)
+library(enrichplot)
+library(topGO)
+library(DEGreport)
+library(RColorBrewer)
+library(dplyr)
+library(fgsea)
+library(wordcloud)
+```
+
+```{r}
+# Sort result rows by stat value
+ONT_DGE.results <- ONT_DGE.results[order(-ONT_DGE.results$stat),]
+ONT_DGE_overlap.results <- ONT_DGE_overlap.results[order(-ONT_DGE_overlap.results$stat),]
+
+# get ONT gene list
+ONT_gene_list <- ONT_DGE.results$stat
+names(ONT_gene_list) <- row.names(ONT_DGE.results)
+head(ONT_gene_list)
+
+# get ONT overlap gene list
+ONT_overlap_gene_list <- ONT_DGE_overlap.results$stat
+names(ONT_overlap_gene_list) <- row.names(ONT_DGE_overlap.results)
+head(ONT_overlap_gene_list)
+
+# Sort result rows by stat value
+Illumina_DGE.results <- Illumina_DGE.results[order(-Illumina_DGE.results$stat),]
+
+Illumina_DGE_overlap.results <- Illumina_DGE_overlap.results[order(-Illumina_DGE_overlap.results$stat),]
+
+# Get gene list from Illumina results
+Illumina_gene_list <- Illumina_DGE.results$stat
+names(Illumina_gene_list) <- row.names(Illumina_DGE.results)
+head(Illumina_gene_list)
+
+# Get gene list from Illumina overlap results
+Illumina_overlap_gene_list <- Illumina_DGE_overlap.results$stat
+names(Illumina_overlap_gene_list) <- row.names(Illumina_DGE_overlap.results)
+head(Illumina_overlap_gene_list)
+```
+
+```{r}
+library(ggVennDiagram)
+
+Illumina_nonZeroGenes <- row.names(Illumina_DESeq.ds)
+ONT_nonZeroGenes <- row.names(ONT_DESeq.ds)
+
+# Create Venn diagram data
+venn_data <- list(Illumina = Illumina_nonZeroGenes, ONT = ONT_nonZeroGenes)
+
+ggVennDiagram(venn_data) + scale_fill_distiller(palette = "Reds", direction=1) + labs(title = "Commonly enriched genes") + scale_x_continuous(expand = expansion(mult = .2)) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+```
+
+
+```{r}
+ONT_gse <- gseGO(ONT_gene_list,
+                 ont="All",
+                 keyType = "ENSEMBL",
+                 OrgDb = org.Mm.eg.db,
+                 pvalueCutoff = 0.05,
+                 eps=1e-300)
+
+ONT_overlap_gse <- gseGO(ONT_overlap_gene_list,
+                 ont="All",
+                 keyType = "ENSEMBL",
+                 OrgDb = org.Mm.eg.db,
+                 pvalueCutoff = 0.05,
+                 eps=1e-300)
+```
+
+
+```{r}
+Illumina_gse <- gseGO(Illumina_gene_list,
+                 ont="All",
+                 keyType = "ENSEMBL",
+                 OrgDb = org.Mm.eg.db,
+                 pvalueCutoff = 0.05,
+                 eps=1e-300)
+
+Illumina_overlap_gse <- gseGO(Illumina_overlap_gene_list,
+                 ont="All",
+                 keyType = "ENSEMBL",
+                 OrgDb = org.Mm.eg.db,
+                 pvalueCutoff = 0.05,
+                 eps=1e-300)
+
+```
+
+```{r}
+save.image(file="PostGSEA.RData")
+PGD <- "PostGSEA.RData"
+#load(PGD)
+```
+
+
+```{r}
+as.data.frame(ONT_gse)
+```
+
+
+```{r}
+as.data.frame(ONT_overlap_gse)
+```
+
+```{r}
+as.data.frame(Illumina_overlap_gse)
+```
+
+
+```{r}
+dotplot(ONT_gse, font.size=8)
+dotplot(ONT_overlap_gse, font.size=8)
+```
+
+```{r}
+dotplot(Illumina_gse, font.size=8)
+dotplot(Illumina_overlap_gse, font.size=8)
+```
+
+
+```{r}
+ONT_gse@result[["Description"]][1:20]
+```
+
+```{r}
+ONT_overlap_gse@result[["Description"]][1:20]
+```
+
+
+```{r}
+Illumina_gse@result[["Description"]][1:20]
+```
+
+```{r}
+Illumina_overlap_gse@result[["Description"]][1:20]
+```
+
+```{r}
+ONT_DGE.results.sorted <- ONT_DGE.results %>% `[`(order(.$padj),)
+head(ONT_DGE.results.sorted)
+
+ONT_DGE_overlap.results.sorted <- ONT_DGE_overlap.results %>% `[`(order(.$padj),)
+head(ONT_DGE_overlap.results.sorted)
+```
+
+
+```{r}
+Illumina_DGE.results.sorted <- Illumina_DGE.results %>% `[`(order(.$padj),)
+head(Illumina_DGE.results.sorted)
+
+Illumina_DGE_overlap.results.sorted <- Illumina_DGE_overlap.results %>% `[`(order(.$padj),)
+head(Illumina_DGE_overlap.results.sorted)
+```
+
+```{r}
+ONT_DGE.results_filtered <- na.omit(ONT_DGE.results)
+
+ONT_DGE_names <- row.names(ONT_DGE.results_filtered[ONT_DGE.results_filtered$padj < 0.05, ])
+```
+
+```{r}
+
+ONT_DGE_overlap.results_filtered <- na.omit(ONT_DGE_overlap.results)
+
+ONT_DGE_overlap_names <- row.names(ONT_DGE_overlap.results_filtered[ONT_DGE_overlap.results_filtered$padj < 0.05, ])
+
+```
+
+```{r}
+Illumina_DGE.results_filtered <- na.omit(Illumina_DGE.results)
+
+Illumina_DGE_names <- row.names(Illumina_DGE.results_filtered[Illumina_DGE.results_filtered$padj < 0.05, ])
+```
+
+```{r}
+
+Illumina_DGE_overlap.results_filtered <- na.omit(Illumina_DGE_overlap.results)
+
+Illumina_DGE_overlap_names <- row.names(Illumina_DGE_overlap.results_filtered[Illumina_DGE_overlap.results_filtered$padj < 0.05, ])
+```
+
+
+```{r}
+overlap_intersection <- intersect(Illumina_DGE_overlap_names,ONT_DGE_overlap_names)
+length(overlap_intersection)
+
+ONT_intersection <- intersect(ONT_DGE_names,ONT_DGE_overlap_names)
+
+length(ONT_DGE_overlap_names)
+length(ONT_intersection)
+
+length(ONT_intersection)
+
+Illumina_intersection <- intersect(Illumina_DGE_names,Illumina_DGE_overlap_names)
+
+length(Illumina_DGE_names)
+length(Illumina_DGE_overlap_names)
+
+length(Illumina_intersection)
+```
+
+```{r}
+# we want the log2 fold change 
+Illumina_DGE_l2fc <- Illumina_DGE.results.sorted$log2FoldChange
+
+# name the vector
+names(Illumina_DGE_l2fc) <- row.names(Illumina_DGE.results.sorted)
+
+# omit any NA values 
+Illumina_DGE_l2fc<-na.omit(Illumina_DGE_l2fc)
+
+# sort the list in decreasing order (required for clusterProfiler)
+Illumina_DGE_l2fc = sort(Illumina_DGE_l2fc, decreasing = TRUE)
+
+# Exctract significant results (padj < 0.05)
+Illumina_DGE_sig_genes_df = subset(Illumina_DGE.results.sorted, padj < 0.05)
+
+# From significant results, we want to filter on log2fold change
+Illumina_DGE_sig_genes_l2fc_df <- Illumina_DGE_sig_genes_df$log2FoldChange
+
+# Name the vector
+names(Illumina_DGE_sig_genes_l2fc_df) <- row.names(Illumina_DGE_sig_genes_df)
+
+# omit NA values
+Illumina_DGE_sig_genes_l2fc_df <- na.omit(Illumina_DGE_sig_genes_l2fc_df)
+
+# filter on min log2fold change (log2FoldChange > 2)
+Illumina_l2fc_geneNames <- names(Illumina_DGE_sig_genes_l2fc_df)[abs(Illumina_DGE_sig_genes_l2fc_df) > quantile(Illumina_DGE_sig_genes_l2fc_df, 0.95)]
+
+Illumina_go_enrich <- enrichGO(gene = names(Illumina_DGE_sig_genes_l2fc_df),
+                      OrgDb = org.Mm.eg.db, 
+                      keyType = 'ENSEMBL',
+                      readable = T,
+                      ont = "BP",
+                      pvalueCutoff = 0.05, 
+                      qvalueCutoff = 0.10)
+
+barplot(Illumina_go_enrich, 
+        drop = TRUE, 
+        showCategory = 10, 
+        title = "Illumina GO Biological Pathways",
+        font.size = 8)
+```
+
+
+```{r}
+
+# we want the log2 fold change 
+Illumina_DGE_overlap_l2fc <- Illumina_DGE_overlap.results.sorted$log2FoldChange
+
+# name the vector
+names(Illumina_DGE_overlap_l2fc) <- row.names(Illumina_DGE_overlap.results.sorted)
+
+# omit any NA values 
+Illumina_DGE_overlap_l2fc<-na.omit(Illumina_DGE_overlap_l2fc)
+
+# sort the list in decreasing order (required for clusterProfiler)
+Illumina_DGE_overlap_l2fc = sort(Illumina_DGE_overlap_l2fc, decreasing = TRUE)
+
+# Exctract significant results (padj < 0.05)
+Illumina_DGE_overlap_sig_genes_df = subset(Illumina_DGE_overlap.results.sorted, padj < 0.05)
+
+# From significant results, we want to filter on log2fold change
+Illumina_DGE_overlap_sig_genes_l2fc_df <- Illumina_DGE_overlap_sig_genes_df$log2FoldChange
+
+# Name the vector
+names(Illumina_DGE_overlap_sig_genes_l2fc_df) <- row.names(Illumina_DGE_overlap_sig_genes_df)
+
+# omit NA values
+Illumina_DGE_overlap_sig_genes_l2fc_df <- na.omit(Illumina_DGE_overlap_sig_genes_l2fc_df)
+
+# filter on min log2fold change (log2FoldChange > 2)
+Illumina_overlap_l2fc_geneNames <- names(Illumina_DGE_overlap_sig_genes_l2fc_df)[abs(Illumina_DGE_overlap_sig_genes_l2fc_df) > quantile(Illumina_DGE_overlap_sig_genes_l2fc_df, 0.95)]
+
+Illumina_overlap_go_enrich <- enrichGO(gene = names(Illumina_DGE_overlap_sig_genes_l2fc_df),
+                      OrgDb = org.Mm.eg.db, 
+                      keyType = 'ENSEMBL',
+                      readable = T,
+                      ont = "BP",
+                      pvalueCutoff = 0.05, 
+                      qvalueCutoff = 0.10)
+
+barplot(Illumina_overlap_go_enrich, 
+        drop = TRUE, 
+        showCategory = 10, 
+        title = "Illumina Overlap GO Biological Pathways",
+        font.size = 8)
+```
+```{r}
+# we want the log2 fold change 
+ONT_DGE_l2fc <- ONT_DGE.results.sorted$log2FoldChange
+
+# name the vector
+names(ONT_DGE_l2fc) <- row.names(ONT_DGE.results.sorted)
+
+# omit any NA values 
+ONT_DGE_l2fc<-na.omit(ONT_DGE_l2fc)
+
+# sort the list in decreasing order (required for clusterProfiler)
+ONT_DGE_l2fc = sort(ONT_DGE_l2fc, decreasing = TRUE)
+
+# Exctract significant results (padj < 0.05)
+ONT_DGE_sig_genes_df = subset(ONT_DGE.results.sorted, padj < 0.05)
+
+# From significant results, we want to filter on log2fold change
+ONT_DGE_sig_genes_l2fc_df <- ONT_DGE_sig_genes_df$log2FoldChange
+
+# Name the vector
+names(ONT_DGE_sig_genes_l2fc_df) <- row.names(ONT_DGE_sig_genes_df)
+
+# omit NA values
+ONT_DGE_sig_genes_l2fc_df <- na.omit(ONT_DGE_sig_genes_l2fc_df)
+
+# filter on min log2fold change (log2FoldChange > 2)
+ONT_l2fc_geneNames <- names(ONT_DGE_sig_genes_l2fc_df)[abs(ONT_DGE_sig_genes_l2fc_df) > quantile(ONT_DGE_sig_genes_l2fc_df, 0.95)]
+
+ONT_go_enrich <- enrichGO(gene = names(ONT_DGE_sig_genes_l2fc_df),
+                      OrgDb = org.Mm.eg.db, 
+                      keyType = 'ENSEMBL',
+                      readable = T,
+                      ont = "BP",
+                      pvalueCutoff = 0.05, 
+                      qvalueCutoff = 0.10)
+
+barplot(ONT_go_enrich, 
+        drop = TRUE, 
+        showCategory = 10, 
+        title = "ONT GO Biological Pathways",
+        font.size = 8)
+```
+
+
+```{r}
+# we want the log2 fold change 
+ONT_DGE_overlap_l2fc <- ONT_DGE_overlap.results.sorted$log2FoldChange
+
+# name the vector
+names(ONT_DGE_overlap_l2fc) <- row.names(ONT_DGE_overlap.results.sorted)
+
+# omit any NA values 
+ONT_DGE_overlap_l2fc<-na.omit(ONT_DGE_overlap_l2fc)
+
+# sort the list in decreasing order (required for clusterProfiler)
+ONT_DGE_overlap_l2fc = sort(ONT_DGE_overlap_l2fc, decreasing = TRUE)
+
+# Exctract significant results (padj < 0.05)
+ONT_DGE_overlap_sig_genes_df = subset(ONT_DGE_overlap.results.sorted, padj < 0.05)
+
+# From significant results, we want to filter on log2fold change
+ONT_DGE_overlap_sig_genes_l2fc_df <- ONT_DGE_overlap_sig_genes_df$log2FoldChange
+
+# Name the vector
+names(ONT_DGE_overlap_sig_genes_l2fc_df) <- row.names(ONT_DGE_overlap_sig_genes_df)
+
+# omit NA values
+ONT_DGE_overlap_sig_genes_l2fc_df <- na.omit(ONT_DGE_overlap_sig_genes_l2fc_df)
+
+# filter on min log2fold change (log2FoldChange > 2)
+ONT_overlap_l2fc_geneNames <- names(ONT_DGE_overlap_sig_genes_l2fc_df)[abs(ONT_DGE_overlap_sig_genes_l2fc_df) > quantile(ONT_DGE_overlap_sig_genes_l2fc_df, 0.95)]
+
+ONT_overlap_go_enrich <- enrichGO(gene = names(ONT_DGE_overlap_sig_genes_l2fc_df),
+                      OrgDb = org.Mm.eg.db, 
+                      keyType = 'ENSEMBL',
+                      readable = T,
+                      ont = "BP",
+                      pvalueCutoff = 0.05, 
+                      qvalueCutoff = 0.10)
+
+barplot(ONT_overlap_go_enrich, 
+        drop = TRUE, 
+        showCategory = 10, 
+        title = "ONT GO Biological Pathways",
+        font.size = 8)
+```
+
+```{r}
+dotplot(ONT_go_enrich)
+
+dotplot(Illumina_go_enrich)
+```
+
+```{r}
+dotplot(ONT_overlap_go_enrich)
+
+dotplot(Illumina_overlap_go_enrich)
+```
+
+
+```{r}
+goplot(ONT_go_enrich, showCategory = 10)
+
+goplot(ONT_overlap_go_enrich, showCategory = 10)
+```
+
+```{r}
+goplot(Illumina_go_enrich, showCategory = 10)
+
+goplot(Illumina_overlap_go_enrich, showCategory = 10)
+```
+
+```{r}
+#Input for ORA
+ONT_DGE_overlap.results <- ONT_DGE_overlap.results[order(ONT_DGE_overlap.results$padj),]
+
+ONT_overlap_sigGenes <- row.names(ONT_DGE_overlap.results[which(ONT_DGE_overlap.results$padj<0.05),])
+
+write(unlist(ONT_overlap_sigGenes),file =  "ONT_overlap_sigGenes.txt")
+
+Illumina_DGE_overlap.results <- Illumina_DGE_overlap.results[order(Illumina_DGE_overlap.results$padj),]
+
+Illumina_overlap_sigGenes <- row.names(Illumina_DGE_overlap.results[which(Illumina_DGE_overlap.results$padj<0.05),])
+
+write(unlist(Illumina_overlap_sigGenes),file =  "Illumina_overlap_sigGenes.txt")
+```
+

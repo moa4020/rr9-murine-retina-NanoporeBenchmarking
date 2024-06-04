@@ -1,0 +1,237 @@
+---
+title: "TPMCounts"
+author: 'Mohith Reddy Arikatla (CWID: moa4020)'
+date: "2024-02-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(DESeq2)
+library(apeglm)
+library(AnnotationDbi)
+library(DESeq2)
+library(dplyr)
+library(EnsDb.Mmusculus.v79)
+library(EnhancedVolcano)
+library(fgsea)
+library(ggplot2)
+library(ggVennDiagram)
+library(magrittr)
+library(org.Mm.eg.db)
+library(patchwork)
+library(pheatmap)
+library(vsn)
+
+TPM_DESeq.RData <- "TPM_DESeq.RData"
+load(TPM_DESeq.RData)
+```
+
+```{}
+ONT.TPM.Counts <- read.csv("ONT_tpm_combined.csv",row.names = 1)
+Illumina.TPM.Counts <- read.csv("Illumina_TPM.counts_combined.csv", row.names=1)
+colnames(ONT.TPM.Counts) <- gsub(".gene_tpm.tsv","",colnames(ONT.TPM.Counts))
+colnames(Illumina.TPM.Counts) <- gsub(".gene_tpm.tsv","",colnames(Illumina.TPM.Counts))
+
+
+ONT.TPM.Counts <- replace(ONT.TPM.Counts, is.na(ONT.TPM.Counts), 0)
+Illumina.TPM.Counts <- replace(Illumina.TPM.Counts, is.na(Illumina.TPM.Counts), 0)
+
+#Keep non-zero count genes only
+ONT.TPM.Counts <- ONT.TPM.Counts[rowSums(ONT.TPM.Counts) > 0,]
+Illumina.TPM.Counts <- Illumina.TPM.Counts[rowSums(Illumina.TPM.Counts) > 0,]
+
+
+intersection <- intersect(row.names(ONT.TPM.Counts),row.names(Illumina.TPM.Counts))
+
+Illumina_overlap_TPM <- Illumina.TPM.Counts[intersection,]
+ONT_overlap_TPM <- ONT.TPM.Counts[intersection,]
+
+ONT_filtered_sample_info <- data.frame(
+  condition = gsub("^[^_]+_|\\d+$", "", colnames(ONT.TPM.Counts)),
+  flowcell = gsub("_.*$", "", colnames(ONT.TPM.Counts)),
+  mouse=gsub("^[^_]+_", "", colnames(ONT.TPM.Counts)),
+  row.names = colnames(ONT.TPM.Counts)
+)
+
+Illumina_filtered_sample_info <- data.frame(
+  condition = gsub("^[^_]+_|\\d+$", "", colnames(Illumina_overlap_TPM)),
+  mouse=gsub("^[^_]+_", "", colnames(Illumina_overlap_TPM)),
+  row.names = colnames(Illumina_overlap_TPM)
+)
+
+ONT_overlap_TPM <- as.data.frame(lapply(ONT_overlap_TPM, as.integer))
+Illumina_overlap_TPM <- as.data.frame(lapply(Illumina_overlap_TPM, as.integer))
+
+
+```
+
+```{}
+Illumina_TPM_DESeq.ds <- DESeqDataSetFromMatrix(countData = Illumina_overlap_TPM, 
+                                   colData = Illumina_filtered_sample_info,
+                                   design = ~ condition)
+
+ONT_TPM_DESeq.ds <- DESeqDataSetFromMatrix(countData = ONT_overlap_TPM, 
+                                   colData = ONT_filtered_sample_info,
+                                   design = ~ condition)
+```
+
+
+```{r}
+
+ONTSpaceflightCounts <- apply(log2(counts(ONT_TPM_DESeq.ds[,ONT_TPM_DESeq.ds$condition=="F"])+1), MARGIN = 1, median)
+ONTGroundControlCounts <- apply(log2(counts(ONT_TPM_DESeq.ds[,ONT_TPM_DESeq.ds$condition=="GC"])+1), MARGIN = 1, median)
+
+IlluminaSpaceflightCounts <- apply(log2(counts(Illumina_TPM_DESeq.ds[,Illumina_TPM_DESeq.ds$condition=="F"])+1), MARGIN = 1, median)
+IlluminaGroundControlCounts <- apply(log2(counts(Illumina_TPM_DESeq.ds[,Illumina_TPM_DESeq.ds$condition=="GC"])+1), MARGIN = 1, median)
+```
+
+```{r}
+
+SpaceCountsCrossPlatform <- data.frame(
+  ONTSpaceflightCounts <- ONTSpaceflightCounts,
+  IlluminaSpaceflightCounts <- IlluminaSpaceflightCounts
+)
+
+GroundConrolCountsCrossPlatform <- data.frame(
+  ONTGroundControlCounts <- ONTGroundControlCounts,
+  IlluminaGroundControlCounts <- IlluminaGroundControlCounts
+)
+
+#increase transparency
+transparency <- 0.3
+# Create translucent colors using the rgb function
+red_translucent <- rgb(1, 0, 0, alpha = transparency)
+blue_translucent <- rgb(0, 0, 1, alpha = transparency)
+
+# Scatter plot of log(medianCounts) and log(geneLengths) for ONT data
+# Assuming you have the necessary dataframes: SpaceCountsCrossPlatform and GroundConrolCountsCrossPlatform
+
+# Load the ggplot2 library
+library(ggplot2)
+
+# Set transparency
+transparency1 <- 0.1
+transparency2 <- 0.2
+# Scatter plot of log(medianCounts) and log(geneLengths) for ONT data
+ggplot(SpaceCountsCrossPlatform, aes(x = ONTSpaceflightCounts, y = IlluminaSpaceflightCounts)) +
+  geom_point(position = position_jitter(width = 0.1, height = 0.1), alpha = transparency2, color = "blue", shape = 1, size = 0.2) +
+  
+  # Add points for Illumina data on the same plot
+  geom_point(data = GroundConrolCountsCrossPlatform, aes(x = ONTGroundControlCounts, y = IlluminaGroundControlCounts),
+             position = position_jitter(width = 0.1, height = 0.1), alpha = transparency1, color = "red", shape = 2, size = 0.2) +
+  
+  # Add correlation lines within individual dataframes
+  geom_smooth(data = SpaceCountsCrossPlatform, aes(color = "blue"), method = "lm", se = FALSE,linetype=3) +
+  geom_smooth(data = GroundConrolCountsCrossPlatform, aes(color = "red"), method = "lm", se = FALSE,linetype=4) +
+  # Customize axis labels and plot title
+  labs(
+    x = "ONT log2(median) TPM",
+    y = "Illumina log2(median) TPM",
+    title = "Cross Platform Comparison of Transcripts Per Million"
+  ) +
+  
+  # Add legend
+  scale_color_manual(values = c("blue" = "blue", "red" = "red"), name = "Condition", labels=c("Space Flight", "Ground Control")) +
+  
+  # Add theme for better aesthetics
+  theme_minimal()
+
+spearman_coef <- cor(ONTSpaceflightCounts, IlluminaSpaceflightCounts, method = "spearman")
+spearman_test <- cor.test(ONTSpaceflightCounts, IlluminaSpaceflightCounts, method = "spearman")
+
+# Extract the p-value
+p_value <- spearman_test$p.value
+# Linear regression
+linear_model <- lm(IlluminaSpaceflightCounts ~ ONTSpaceflightCounts)
+
+# Slope of the linear regression
+slope <- coef(linear_model)[2]
+
+spearman_coef2 <- cor(ONTGroundControlCounts, IlluminaGroundControlCounts, method = "spearman")
+spearman_test2 <- cor.test(ONTGroundControlCounts, IlluminaGroundControlCounts, method = "spearman")
+
+# Extract the p-value
+p_value2 <- spearman_test$p.value
+# Linear regression
+linear_model2 <- lm(IlluminaGroundControlCounts ~ ONTGroundControlCounts)
+
+# Slope of the linear regression
+slope2 <- coef(linear_model2)[2]
+
+```
+
+```{r}
+#ONT_DESeq_overlap.rlog <- rlog(ONT_TPM_DESeq.ds, blind = TRUE)
+#Illumina_DESeq_overlap.rlog <- rlog(Illumina_TPM_DESeq.ds, blind = TRUE)
+
+plotPCA(ONT_DESeq_overlap.rlog, intgroup="condition", ntop = 150, returnData=FALSE)
+
+plotPCA(Illumina_DESeq_overlap.rlog, intgroup="condition", ntop = 150, returnData=FALSE)
+```
+```{}
+ONT_TPM_DESeq.ds %<>% DESeq()
+# normalize for diffs in sequencing depth and abundance per sample
+ONT_TPM_DESeq.ds %<>% estimateSizeFactors()
+# gene-wise dispersion estimates across all samples
+ONT_TPM_DESeq.ds %<>% estimateDispersions()
+# fit a neg. binomial GLM and compute Wald stat for each gene 
+ONT_TPM_DESeq.ds %<>% nbinomWaldTest()
+
+rowData(ONT_TPM_DESeq.ds) %>% colnames
+```
+
+```{}
+Illumina_TPM_DESeq.ds %<>% DESeq()
+# normalize for diffs in sequencing depth and abundance per sample
+Illumina_TPM_DESeq.ds %<>% estimateSizeFactors()
+# gene-wise dispersion estimates across all samples
+Illumina_TPM_DESeq.ds %<>% estimateDispersions()
+# fit a neg. binomial GLM and compute Wald stat for each gene 
+Illumina_TPM_DESeq.ds %<>% nbinomWaldTest()
+
+Illumina_TPM_DESeq.ds
+```
+
+```{r}
+#save.image(file="TPM_DESeq.RData")
+```
+
+```{r}
+ONT_TPM_DESeq.results <- results(ONT_TPM_DESeq.ds, independentFiltering = TRUE, alpha = 0.05)
+# the first line will tell you which comparison was done to achieve the log2FC 
+head(ONT_TPM_DESeq.results)
+
+Illumina_TPM_DESeq.results <- results(Illumina_TPM_DESeq.ds, independentFiltering = TRUE, alpha = 0.05)
+# the first line will tell you which comparison was done to achieve the log2FC 
+head(Illumina_TPM_DESeq.results)
+```
+```{r}
+table(ONT_TPM_DESeq.results$padj<0.05)
+table(Illumina_TPM_DESeq.results$padj<0.05)
+```
+
+
+```{r}
+Illumina_DGE.results.shrnk <- lfcShrink(Illumina_TPM_DESeq.ds,
+            coef=2,
+            type="apeglm")
+resultsNames(Illumina_TPM_DESeq.ds)
+
+ONT_DGE.results.shrnk <- lfcShrink(ONT_TPM_DESeq.ds,
+            coef=2,
+            type="apeglm")
+resultsNames(ONT_TPM_DESeq.ds)
+
+par(mfrow = c(1,2))
+DESeq2::plotMA(Illumina_DGE.results.shrnk, alpha=0.05,
+       main="Illumina TPM LogC Shrinkage", ylim=c(-3,3))
+DESeq2::plotMA(ONT_DGE.results.shrnk, alpha=0.05,
+       main="ONT TPM LogC Shrinkage", ylim=c(-4,4))
+```
+```{r}
+row.names(Illumina_TPM_DESeq.results$padj<0.05)
+
+which(Illumina_TPM_DESeq.results$padj<0.05)
+```
+

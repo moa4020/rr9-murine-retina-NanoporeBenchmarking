@@ -1,0 +1,249 @@
+---
+title: "Overlap_DESeq"
+author: 'Mohith Reddy Arikatla (CWID: moa4020)'
+date: "2024-01-28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+setwd("/Users/mar/Library/CloudStorage/GoogleDrive-mohitharikatla.education@gmail.com/My Drive/RR9_MurineSequencingData/Thesis/03_Overlap_DESeq")
+
+PDD <- "/Users/mar/Library/CloudStorage/GoogleDrive-mohitharikatla.education@gmail.com/My Drive/RR9_MurineSequencingData/Retina/DESeq/PostDESeq.RData"
+
+load(PDD)
+library(apeglm)
+library(AnnotationDbi)
+library(DESeq2)
+library(dplyr)
+library(edgeR)
+library(EnsDb.Mmusculus.v79)
+library(EnhancedVolcano)
+library(ggplot2)
+library(goseq)
+library(magrittr)
+library(org.Mm.eg.db)
+library(patchwork)
+library(pheatmap)
+library(vsn)
+
+edb_m79 <- EnsDb.Mmusculus.v79
+orgdb <- org.Mm.eg.db
+
+#BiocManager::install("DEXSeq")
+#BiocManager::install("DRIMSeq")
+```
+
+```{r}
+length(names(Illumina_DESeq.ds))
+length(names(ONT_DESeq.ds))
+
+Overlap_names <- intersect(names(Illumina_DESeq.ds),names(ONT_DESeq.ds))
+
+length(Overlap_names)
+```
+
+```{r}
+ONT_DESeq_overlap.ds <- ONT_DESeq.ds[Overlap_names,]
+
+Illumina_DESeq_overlap.ds <- Illumina_DESeq.ds[Overlap_names,]
+```
+
+```{r}
+keep_genes_ONT_overlap <- rowSums(counts(ONT_DESeq_overlap.ds)) > 0
+
+ONT_DESeq_overlap.ds <- ONT_DESeq_overlap.ds[keep_genes_ONT_overlap, ]
+
+dim(ONT_DESeq_overlap.ds)
+counts(ONT_DESeq_overlap.ds) %>% str
+```
+
+```{r}
+keep_genes_Illumina_overlap <- rowSums(counts(Illumina_DESeq_overlap.ds)) > 0
+
+Illumina_DESeq_overlap.ds <- Illumina_DESeq_overlap.ds[keep_genes_Illumina_overlap, ]
+
+dim(Illumina_DESeq_overlap.ds)
+counts(Illumina_DESeq_overlap.ds) %>% str
+
+```
+Calculate rlog norm counts for visualisation
+```{r}
+ONT_DESeq_overlap.rlog <- rlog(ONT_DESeq_overlap.ds, blind = TRUE)
+Illumina_DESeq_overlap.rlog <- rlog(Illumina_DESeq_overlap.ds, blind = TRUE)
+```
+
+
+```{r}
+par(mfrow = c(1,2))
+plotPCA(Illumina_DESeq_overlap.rlog, intgroup="condition", ntop = 150, returnData=FALSE)
+
+plotPCA(Illumina_DESeq.rlog, intgroup="condition", ntop = 150, returnData=FALSE)
+```
+
+```{r}
+plotPCA(ONT_DESeq_overlap.rlog, intgroup="condition", ntop = 150, returnData=FALSE)
+```
+```{r}
+ONT_DESeq_overlap.ds %<>% DESeq()
+# normalize for diffs in sequencing depth and abundance per sample
+ONT_DESeq_overlap.ds %<>% estimateSizeFactors()
+# gene-wise dispersion estimates across all samples
+ONT_DESeq_overlap.ds %<>% estimateDispersions()
+# fit a neg. binomial GLM and compute Wald stat for each gene 
+ONT_DESeq_overlap.ds %<>% nbinomWaldTest()
+
+rowData(ONT_DESeq_overlap.ds) %>% colnames
+```
+
+```{r}
+Illumina_DESeq_overlap.ds %<>% DESeq()
+# normalize for diffs in sequencing depth and abundance per sample
+Illumina_DESeq_overlap.ds %<>% estimateSizeFactors()
+# gene-wise dispersion estimates across all samples
+Illumina_DESeq_overlap.ds %<>% estimateDispersions()
+# fit a neg. binomial GLM and compute Wald stat for each gene 
+Illumina_DESeq_overlap.ds %<>% nbinomWaldTest()
+
+Illumina_DESeq_overlap.ds
+```
+
+```{r}
+rowData(ONT_DESeq_overlap.ds)$WaldPvalue_condition_F_vs_GC %>% hist(breaks=19, main="Raw p-values for F vs GC")
+```
+
+```{r}
+rowData(Illumina_DESeq_overlap.ds)$WaldPvalue_condition_F_vs_GC %>% hist(breaks=19, main="Raw p-values for F vs GC")
+```
+
+```{r}
+rowData(Illumina_DESeq.ds)$WaldPvalue_condition_F_vs_GC %>% hist(breaks=19, main="Raw p-values for F vs GC")
+```
+
+```{r}
+ONT_DGE_overlap.results <- results(ONT_DESeq_overlap.ds, independentFiltering = TRUE, alpha = 0.05)
+# the first line will tell you which comparison was done to achieve the log2FC 
+head(ONT_DGE_overlap.results)
+```
+
+```{r}
+Illumina_DGE_overlap.results <- results(Illumina_DESeq_overlap.ds, independentFiltering = TRUE, alpha = 0.05)
+# the first line will tell you which comparison was done to achieve the log2FC 
+head(Illumina_DGE_overlap.results)
+```
+
+```{r}
+summary(ONT_DGE_overlap.results)
+summary(Illumina_DGE.results)
+summary(Illumina_DGE_overlap.results)
+```
+
+```{r}
+# the DESeqResult object can basically be handled like a data.frame
+table(ONT_DGE_overlap.results$padj < 0.05)
+table(Illumina_DGE.results$padj < 0.05)
+table(Illumina_DGE_overlap.results$padj < 0.05)
+```
+
+```{r}
+ONT_DGE_overlap.results$padj %>%
+    hist(breaks=19, main="ONT overlap adjusted p-values for F vs GC")
+
+Illumina_DGE.results$padj %>%
+    hist(breaks=19, main="Illumina adjusted p-values for F vs GC")
+
+Illumina_DGE_overlap.results$padj %>%
+    hist(breaks=19, main="Illumina overlap adjusted p-values for F vs GC")
+```
+
+```{r}
+Illumina_DGE_overlap.results.sorted <- Illumina_DGE_overlap.results %>% `[`(order(.$padj),)
+
+head(Illumina_DGE_overlap.results.sorted)
+
+# identify genes with the desired adjusted p-value cut-off
+Illumina_DGEgenes_overlap <- rownames(subset(Illumina_DGE_overlap.results.sorted, padj < 0.05)) 
+# extract rlog-transformed values into a matrix
+Illumina_rlog_overlap.dge <- Illumina_DESeq_overlap.rlog[Illumina_DGEgenes_overlap,] %>% assay
+# heatmap of DEG sorted by p.adjust
+pheatmap(Illumina_rlog_overlap.dge, scale="none", border_color = "NA",
+         show_rownames=FALSE, main="Illumina Overlap DGE (no scaling)",
+         color=colorRampPalette(RColorBrewer::brewer.pal(n=7, name="Reds"))(100))
+
+# heatmap of DEG sorted by p.adjust
+pheatmap(Illumina_rlog.dge, scale="none", border_color = "NA",
+         show_rownames=FALSE, main="Illumina DGE (no scaling)",
+         color=colorRampPalette(RColorBrewer::brewer.pal(n=7, name="Reds"))(100))
+```
+
+```{r}
+pheatmap(Illumina_rlog.dge, scale="row",
+         show_rownames=FALSE, main="Illumina DGE (row-based z-score)")
+
+pheatmap(Illumina_rlog_overlap.dge, scale="row",
+         show_rownames=FALSE, main="Illumina Overlap DGE (row-based z-score)")
+```
+
+```{r}
+DESeq2::plotMA(Illumina_DGE.results, alpha=0.05,
+       main="Illumina Test: p.adj.value < 0.05", ylim = c(-4,4))
+
+DESeq2::plotMA(Illumina_DGE_overlap.results, alpha=0.05,
+       main="Illumina Overlap Test: p.adj.value < 0.05", ylim = c(-4,4))
+```
+
+```{r}
+
+Illumina.vp.1 <- EnhancedVolcano(Illumina_DGE.results,
+                       lab=rownames(Illumina_DGE.results),
+                       x='log2FoldChange', y='padj',
+                       pCutoff=0.05,
+                       title="Illumina F / GC")
+
+Illumina_overlap.vp.1 <- EnhancedVolcano(Illumina_DGE_overlap.results,
+                       lab=rownames(Illumina_DGE_overlap.results),
+                       x='log2FoldChange', y='padj',
+                       pCutoff=0.05,
+                       title="Illumina Overlap F / GC")
+print(Illumina.vp.1 + Illumina_overlap.vp.1)
+```
+
+```{r}
+Illumina_DGE.results.shrnk <- lfcShrink(Illumina_DESeq.ds,
+            coef=2,
+            type="apeglm")
+resultsNames(Illumina_DESeq.ds)
+
+Illumina_DGE_overlap.results.shrnk <- lfcShrink(Illumina_DESeq_overlap.ds,
+            coef=2,
+            type="apeglm")
+resultsNames(Illumina_DESeq_overlap.ds)
+
+par(mfrow = c(1,2))
+DESeq2::plotMA(Illumina_DGE.results.shrnk, alpha=0.05,
+       main="with logFC shrinkage", ylim=c(-3,3))
+DESeq2::plotMA(Illumina_DGE_overlap.results.shrnk, alpha=0.05,
+       main="overlap with logFC shrinkage", ylim=c(-4,4))
+```
+
+```{r}
+Illumina.vp.2 <- EnhancedVolcano(Illumina_DGE.results.shrnk, lab=rownames(Illumina_DGE.results.shrnk),
+                       x='log2FoldChange', y='padj', pCutoff = 0.05,
+                       title="Illumina F / GC with logFC shrinkage")
+
+Illumina_overlap.vp.2 <- EnhancedVolcano(Illumina_DGE_overlap.results.shrnk,
+                       lab=rownames(Illumina_DGE_overlap.results.shrnk),
+                       x='log2FoldChange', y='padj',
+                       pCutoff=0.05,
+                       title="Illumina Overlap F / GC with logFC shrinkage")
+
+print(Illumina.vp.2 + Illumina_overlap.vp.2)
+```
+
+```{r}
+save.image(file = "PostDESeq_overlap.RData")
+FILE_PDo="PostDESeq_overlap.RData"
+load(FILE_PDo)
+```
+
